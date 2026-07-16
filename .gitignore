@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build and packaging outputs
+dist/
+dist-electron/
+release/
+out/
+
+# Tests and tool caches
+coverage/
+.vitest/
+.vite/
+*.tsbuildinfo
+.eslintcache
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

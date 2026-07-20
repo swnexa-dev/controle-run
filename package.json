@@ -2,7 +2,7 @@
   "name": "controle-run",
   "version": "0.1.0",
   "private": true,
-  "description": "Gerenciador desktop offline de projetos locais com PM2",
+  "description": "Gerenciador desktop local-first de projetos PM2 e GitHub Actions Runners",
   "author": "Controle Run",
   "main": "dist-electron/main/index.js",
   "scripts": {

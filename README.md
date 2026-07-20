@@ -1,6 +1,6 @@
 # Controle Run
 
-Aplicativo desktop offline para adicionar pastas de projetos e administrar cada frontend e backend local com PM2.
+Aplicativo desktop local-first para adicionar pastas de projetos, administrar cada frontend e backend com PM2 e configurar GitHub Actions Runners no Windows.
 
 ## Stack
 
@@ -8,6 +8,30 @@ Aplicativo desktop offline para adicionar pastas de projetos e administrar cada 
 - React, TypeScript e Vite para a interface;
 - PM2 programático para processos e métricas;
 - electron-builder para o instalador Windows.
+
+## GitHub Actions Runners
+
+A aba **Runners GitHub** instala e administra self-hosted runners separadamente dos processos PM2. O fluxo:
+
+- consulta o pacote Windows x64 mais recente publicado pelo GitHub;
+- mantém um cache local do ZIP e valida o SHA-256 oficial antes de extrair;
+- registra um runner de organização ou de repositório;
+- instala o runner como serviço do Windows, sem manter uma janela de terminal aberta;
+- mostra serviço, conexão inferida pelos logs, versão, labels e projeto associado;
+- permite iniciar, parar, reiniciar, abrir os logs e remover o runner de forma segura.
+
+A instalação padrão usa `C:\actions-runners\<nome>`. Como a criação do serviço exige privilégios administrativos, o Windows exibe o UAC somente nas ações que alteram o serviço.
+
+O token de registro, o token de remoção e a senha opcional da conta do serviço nunca são gravados no `settings.json`. Durante a elevação, a solicitação temporária é protegida pelo DPAPI do Windows e apagada ao final.
+
+Para atender vários repositórios da mesma organização, use uma URL como `https://github.com/minha-organizacao`. Para isolamento por repositório, use `https://github.com/minha-organizacao/meu-repositorio`.
+
+O serviço pode executar como:
+
+- `NT AUTHORITY\NETWORK SERVICE`, recomendado para builds isolados;
+- uma conta Windows específica, necessária quando o workflow deve acessar pastas do usuário ou o mesmo ambiente PM2.
+
+O runner usa `_work` como workspace padrão. Ele não altera automaticamente a pasta de produção cadastrada no Controle Run; o workflow deve publicar os artefatos nessa pasta explicitamente.
 
 ## Detecção
 

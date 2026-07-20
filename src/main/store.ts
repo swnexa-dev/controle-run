@@ -1,15 +1,16 @@
 import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { ProjectConfig } from '../shared/types'
+import type { GitHubRunnerConfig, ProjectConfig } from '../shared/types'
 
 export interface Settings {
   projectPaths: string[]
   rootPath?: string | null
   projects: Record<string, ProjectConfig>
+  githubRunners: Record<string, GitHubRunnerConfig>
 }
 
-const EMPTY: Settings = { projectPaths: [], projects: {} }
+const EMPTY: Settings = { projectPaths: [], projects: {}, githubRunners: {} }
 
 function filePath() {
   return path.join(app.getPath('userData'), 'settings.json')
@@ -19,7 +20,13 @@ export async function loadSettings(): Promise<Settings> {
   try {
     const content = await fs.readFile(filePath(), 'utf8')
     const parsed = JSON.parse(content)
-    return { ...EMPTY, ...parsed, projectPaths: parsed.projectPaths || [] }
+    return {
+      ...EMPTY,
+      ...parsed,
+      projectPaths: parsed.projectPaths || [],
+      projects: parsed.projects || {},
+      githubRunners: parsed.githubRunners || {}
+    }
   } catch {
     return structuredClone(EMPTY)
   }

@@ -38,6 +38,63 @@ export interface AppState {
   projects: ProjectView[]
 }
 
+export type GitHubRunnerScope = 'organization' | 'repository'
+export type GitHubRunnerServiceStatus = 'running' | 'stopped' | 'missing' | 'unknown'
+export type GitHubRunnerConnectionStatus = 'connected' | 'offline' | 'unknown'
+export type GitHubRunnerAction = 'start' | 'stop' | 'restart'
+
+export interface GitHubRunnerConfig {
+  id: string
+  name: string
+  scope: GitHubRunnerScope
+  targetUrl: string
+  installPath: string
+  workFolder: string
+  labels: string[]
+  serviceAccount: string
+  serviceName?: string
+  installedVersion: string
+  projectGroupId?: string
+  createdAt: string
+}
+
+export interface GitHubRunnerView extends GitHubRunnerConfig {
+  serviceStatus: GitHubRunnerServiceStatus
+  connectionStatus: GitHubRunnerConnectionStatus
+  latestLogAt?: string
+  error?: string
+}
+
+export interface GitHubRunnerState {
+  runners: GitHubRunnerView[]
+}
+
+export interface GitHubRunnerInstallDefaults {
+  name: string
+  installPath: string
+  workFolder: string
+  currentWindowsAccount: string
+}
+
+export interface GitHubRunnerInstallDraft {
+  name: string
+  scope: GitHubRunnerScope
+  targetUrl: string
+  registrationToken: string
+  installPath: string
+  workFolder: string
+  labels: string[]
+  serviceAccount: 'network-service' | 'custom'
+  windowsAccount?: string
+  windowsPassword?: string
+  projectGroupId?: string
+}
+
+export interface GitHubRunnerProgress {
+  stage: 'validating' | 'downloading' | 'verifying' | 'elevating' | 'configuring' | 'complete'
+  message: string
+}
+
 export interface ProjectDraft {
   id: string
   name: string
@@ -66,4 +123,12 @@ export interface ControleRunApi {
   openUrl(id: string): Promise<void>
   readEnv(id: string): Promise<EnvVarDraft[]>
   saveEnv(id: string, variables: EnvVarDraft[]): Promise<void>
+  getGitHubRunners(): Promise<GitHubRunnerState>
+  getGitHubRunnerDefaults(): Promise<GitHubRunnerInstallDefaults>
+  suggestGitHubRunnerPath(name: string): Promise<string>
+  installGitHubRunner(draft: GitHubRunnerInstallDraft): Promise<GitHubRunnerState>
+  actionGitHubRunner(id: string, action: GitHubRunnerAction): Promise<GitHubRunnerState>
+  openGitHubRunnerLogs(id: string): Promise<void>
+  removeGitHubRunner(id: string, removalToken: string): Promise<GitHubRunnerState>
+  onGitHubRunnerProgress(callback: (progress: GitHubRunnerProgress) => void): () => void
 }

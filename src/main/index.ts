@@ -6,7 +6,25 @@ import { readEnvFile, saveEnvFile } from './env-file'
 import { controlProject, disconnectPm2, getProcesses, removeProjectProcess, startProject } from './pm2-service'
 import { loadSettings, saveSettings } from './store'
 import { detectLocalUrl } from './urls'
-import type { AppState, EnvVarDraft, ProcessStatus, ProjectAction, ProjectDraft, ProjectView } from '../shared/types'
+import {
+  actionGitHubRunner,
+  getGitHubRunnerDefaults,
+  getGitHubRunnerState,
+  installGitHubRunner,
+  openGitHubRunnerLogs,
+  removeGitHubRunner,
+  suggestedRunnerPath
+} from './github-runner-service'
+import type {
+  AppState,
+  EnvVarDraft,
+  GitHubRunnerAction,
+  GitHubRunnerInstallDraft,
+  ProcessStatus,
+  ProjectAction,
+  ProjectDraft,
+  ProjectView
+} from '../shared/types'
 
 async function migrateLegacyFolder(settings: Awaited<ReturnType<typeof loadSettings>>) {
   if (settings.projectPaths.length || !settings.rootPath) return
@@ -152,6 +170,15 @@ function registerIpc() {
     if (!project) throw new Error('Projeto não encontrado.')
     await saveEnvFile(project.path, variables)
   })
+  ipcMain.handle('runner:state', getGitHubRunnerState)
+  ipcMain.handle('runner:defaults', () => getGitHubRunnerDefaults())
+  ipcMain.handle('runner:suggest-path', (_event, name: string) => suggestedRunnerPath(name))
+  ipcMain.handle('runner:install', async (event, draft: GitHubRunnerInstallDraft) => {
+    return installGitHubRunner(draft, (progress) => event.sender.send('runner:progress', progress))
+  })
+  ipcMain.handle('runner:action', (_event, id: string, action: GitHubRunnerAction) => actionGitHubRunner(id, action))
+  ipcMain.handle('runner:open-logs', (_event, id: string) => openGitHubRunnerLogs(id))
+  ipcMain.handle('runner:remove', (_event, id: string, removalToken: string) => removeGitHubRunner(id, removalToken))
 }
 
 function createWindow() {

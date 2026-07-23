@@ -1,0 +1,51 @@
+.runner-deploy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 11px 12px;
+  border: 1px solid #303641;
+  border-radius: 8px;
+  background: #0d0f14;
+}
+
+.runner-deploy.ready {
+  border-color: #285542;
+  background: #112219;
+}
+
+.runner-deploy-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: 7px;
+  background: #20242d;
+  color: #838b9b;
+}
+
+.runner-deploy.ready .runner-deploy-icon {
+  background: #193b2d;
+  color: var(--green);
+}
+
+.runner-deploy-icon svg { width: 17px; height: 17px; }
+.runner-deploy > div:last-child { display: grid; min-width: 0; gap: 3px; }
+.runner-deploy strong { color: #cfd3dc; font: 600 9px monospace; letter-spacing: 1px; }
+.runner-deploy.ready strong { color: var(--green); }
+.runner-deploy span { overflow: hidden; color: #7e8696; font: 10px monospace; text-overflow: ellipsis; white-space: nowrap; }
+.runner-deploy small { color: #69c49d; font-size: 9px; }
+.runner-deploy small.failed { color: #ff8c95; }
+
+.deployment-ready-modal { width: min(650px, 92vw); }
+.deployment-success { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid #285542; border-radius: 9px; background: #112219; }
+.deployment-success > svg { width: 28px; height: 28px; flex: none; color: var(--green); }
+.deployment-success div { display: grid; gap: 3px; }
+.deployment-success strong { font-size: 13px; }
+.deployment-success span { color: #89a696; font-size: 11px; }
+.deployment-result { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px 12px; margin-top: 16px; padding: 14px; border-radius: 8px; background: #0d0f14; }
+.deployment-result small { color: #687183; font: 9px monospace; letter-spacing: 1px; }
+.deployment-result strong { overflow: hidden; color: #ccd1da; font: 10px monospace; text-overflow: ellipsis; white-space: nowrap; }
+.deployment-ready-modal > p { color: #9199a9; font-size: 12px; line-height: 1.6; }
+.deployment-ready-modal code { color: #b9f1d8; font: 11px monospace; }

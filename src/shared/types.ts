@@ -61,8 +61,31 @@ export interface GitHubRunnerConfig {
 export interface GitHubRunnerView extends GitHubRunnerConfig {
   serviceStatus: GitHubRunnerServiceStatus
   connectionStatus: GitHubRunnerConnectionStatus
+  deployment: GitHubRunnerDeploymentView
   latestLogAt?: string
   error?: string
+}
+
+export type GitHubRunnerDeploymentState = 'ready' | 'not-configured' | 'workflow-missing' | 'workflow-outdated' | 'invalid'
+
+export interface GitHubRunnerDeploymentView {
+  state: GitHubRunnerDeploymentState
+  repository?: string
+  projectPath?: string
+  workflowPath?: string
+  configuredAt?: string
+  lastDeployAt?: string
+  lastDeployCommit?: string
+  lastDeployStatus?: 'success' | 'failed'
+  lastDeployMessage?: string
+}
+
+export interface GitHubRunnerPrepareDeploymentResult {
+  state: GitHubRunnerState
+  repository: string
+  projectPath: string
+  workflowPath: string
+  workflowCreated: boolean
 }
 
 export interface GitHubRunnerState {
@@ -129,6 +152,9 @@ export interface ControleRunApi {
   installGitHubRunner(draft: GitHubRunnerInstallDraft): Promise<GitHubRunnerState>
   actionGitHubRunner(id: string, action: GitHubRunnerAction): Promise<GitHubRunnerState>
   openGitHubRunnerLogs(id: string): Promise<void>
+  prepareGitHubRunnerDeployment(id: string, overwriteWorkflow?: boolean): Promise<GitHubRunnerPrepareDeploymentResult>
+  copyGitHubRunnerWorkflow(): Promise<void>
+  openGitHubRunnerWorkflow(id: string): Promise<void>
   removeGitHubRunner(id: string, removalToken: string): Promise<GitHubRunnerState>
   onGitHubRunnerProgress(callback: (progress: GitHubRunnerProgress) => void): () => void
 }

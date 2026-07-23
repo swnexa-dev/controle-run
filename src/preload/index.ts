@@ -26,6 +26,9 @@ const api: ControleRunApi = {
   installGitHubRunner: (draft: GitHubRunnerInstallDraft) => ipcRenderer.invoke('runner:install', draft),
   actionGitHubRunner: (id: string, action: GitHubRunnerAction) => ipcRenderer.invoke('runner:action', id, action),
   openGitHubRunnerLogs: (id: string) => ipcRenderer.invoke('runner:open-logs', id),
+  prepareGitHubRunnerDeployment: (id: string, overwriteWorkflow = false) => ipcRenderer.invoke('runner:prepare-deployment', id, overwriteWorkflow),
+  copyGitHubRunnerWorkflow: () => ipcRenderer.invoke('runner:copy-workflow'),
+  openGitHubRunnerWorkflow: (id: string) => ipcRenderer.invoke('runner:open-workflow', id),
   removeGitHubRunner: (id: string, removalToken: string) => ipcRenderer.invoke('runner:remove', id, removalToken),
   onGitHubRunnerProgress: (callback: (progress: GitHubRunnerProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: GitHubRunnerProgress) => callback(progress)

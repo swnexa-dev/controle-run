@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { discoverProjectFolder, discoverProjects, projectId } from './discovery'
@@ -12,9 +12,12 @@ import {
   getGitHubRunnerState,
   installGitHubRunner,
   openGitHubRunnerLogs,
+  openGitHubRunnerWorkflow,
+  prepareGitHubRunnerDeployment,
   removeGitHubRunner,
   suggestedRunnerPath
 } from './github-runner-service'
+import { CONTROL_RUN_WORKFLOW } from './deployment-service'
 import type {
   AppState,
   EnvVarDraft,
@@ -178,6 +181,9 @@ function registerIpc() {
   })
   ipcMain.handle('runner:action', (_event, id: string, action: GitHubRunnerAction) => actionGitHubRunner(id, action))
   ipcMain.handle('runner:open-logs', (_event, id: string) => openGitHubRunnerLogs(id))
+  ipcMain.handle('runner:prepare-deployment', (_event, id: string, overwriteWorkflow = false) => prepareGitHubRunnerDeployment(id, overwriteWorkflow))
+  ipcMain.handle('runner:copy-workflow', () => { clipboard.writeText(CONTROL_RUN_WORKFLOW) })
+  ipcMain.handle('runner:open-workflow', (_event, id: string) => openGitHubRunnerWorkflow(id))
   ipcMain.handle('runner:remove', (_event, id: string, removalToken: string) => removeGitHubRunner(id, removalToken))
 }
 

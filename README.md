@@ -31,7 +31,21 @@ O serviço pode executar como:
 - `NT AUTHORITY\NETWORK SERVICE`, recomendado para builds isolados;
 - uma conta Windows específica, necessária quando o workflow deve acessar pastas do usuário ou o mesmo ambiente PM2.
 
-O runner usa `_work` como workspace padrão. Ele não altera automaticamente a pasta de produção cadastrada no Controle Run; o workflow deve publicar os artefatos nessa pasta explicitamente.
+### Deploy automático por repositório
+
+Para runners com escopo de repositório, conta Windows específica e projeto associado, o botão **Preparar deploy** configura o fluxo completo:
+
+- valida que o `origin` do clone local corresponde ao repositório do runner;
+- cria `.github/workflows/controle-run.yml` com um modelo único para todos os projetos;
+- instala um executor local dentro da pasta do runner e reinicia o serviço para carregar sua localização;
+- registra a pasta publicada e os processos PM2 daquele projeto, sem gravar senhas ou tokens;
+- mostra no card o estado da configuração e o resultado do último deploy.
+
+O workflow usa o checkout temporário autenticado pelo próprio GitHub e transfere o commit para o clone publicado por Git local. Assim, o clone do servidor não precisa armazenar outro token. Arquivos não controlados pelo Git, como `.env` e `node_modules`, são preservados. O deploy é interrompido se houver alterações locais em arquivos controlados, e uma falha ao reiniciar os serviços tenta restaurar o commit anterior.
+
+Depois de preparar, faça commit e push do arquivo `.github/workflows/controle-run.yml` criado no clone. Os pushes seguintes em `main` ou `master` serão encaminhados ao runner. O botão **Copiar workflow padrão** permite levar o mesmo modelo para repositórios criados em outra máquina.
+
+O runner usa `_work` como workspace temporário; o código publicado continua no caminho original cadastrado no Controle Run.
 
 ## Detecção
 

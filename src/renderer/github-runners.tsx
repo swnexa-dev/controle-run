@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowClockwise,
+  CheckCircle,
+  Copy,
+  FileCode,
   FolderOpen,
   GithubLogo,
   HardDrives,
   Pause,
   Play,
   Plus,
+  RocketLaunch,
   ShieldCheck,
   Trash,
   WarningCircle,
@@ -17,10 +21,12 @@ import type {
   GitHubRunnerInstallDefaults,
   GitHubRunnerInstallDraft,
   GitHubRunnerProgress,
+  GitHubRunnerPrepareDeploymentResult,
   GitHubRunnerState,
   GitHubRunnerView
 } from '../shared/types'
 import './github-runners.css'
+import './github-deployment.css'
 
 interface ProjectGroupOption { id: string; name: string }
 
@@ -103,7 +109,11 @@ function InstallRunnerModal({
 
       <div className="runner-form-grid">
         <label>Escopo
-          <select value={scope} disabled={installing} onChange={(event) => setScope(event.target.value as typeof scope)}>
+          <select value={scope} disabled={installing} onChange={(event) => {
+            const nextScope = event.target.value as typeof scope
+            setScope(nextScope)
+            if (nextScope === 'organization') setProjectGroupId('')
+          }}>
             <option value="organization">Organização — vários repositórios</option>
             <option value="repository">Repositório — acesso isolado</option>
           </select>
@@ -155,11 +165,16 @@ function InstallRunnerModal({
           </label>
         </div>}
 
-      <label>Associar visualmente a um projeto <small className="optional">opcional</small>
-        <select value={projectGroupId} disabled={installing} onChange={(event) => setProjectGroupId(event.target.value)}>
-          <option value="">Nenhum projeto específico</option>
+      <label>Projeto para deploy automático <small className="optional">opcional</small>
+        <select value={projectGroupId} disabled={installing || scope !== 'repository'} onChange={(event) => {
+          const groupId = event.target.value
+          setProjectGroupId(groupId)
+          if (groupId) setServiceAccount('custom')
+        }}>
+          <option value="">{scope === 'repository' ? 'Nenhum projeto específico' : 'Disponível para runner de repositório'}</option>
           {groups.map((group) => <option value={group.id} key={group.id}>{group.name}</option>)}
         </select>
+        {scope === 'repository' && <small className="field-help">Ao escolher um projeto, o app usa a conta Windows específica necessária para acessar o clone e o PM2.</small>}
       </label>
 
       {(localError || progress) && <div className={`runner-progress ${localError ? 'failed' : ''}`}>
@@ -191,17 +206,24 @@ function RemoveRunnerModal({ runner, removing, onClose, onRemove }: { runner: Gi
   </div>
 }
 
-function RunnerCard({ runner, groupName, busy, onAction, onLogs, onRemove }: {
+function RunnerCard({ runner, groupName, busy, onAction, onLogs, onPrepare, onWorkflow, onRemove }: {
   runner: GitHubRunnerView
   groupName?: string
   busy: boolean
   onAction(action: GitHubRunnerAction): void
   onLogs(): void
+  onPrepare(): void
+  onWorkflow(): void
   onRemove(): void
 }) {
   const running = runner.serviceStatus === 'running'
   const connected = runner.connectionStatus === 'connected'
   const statusLabel = connected ? 'CONECTADO' : running ? 'SERVIÇO ATIVO' : runner.serviceStatus === 'missing' ? 'AUSENTE' : 'PARADO'
+  const deployReady = runner.deployment.state === 'ready'
+  const deployLabel = deployReady ? 'DEPLOY PRONTO'
+    : runner.deployment.state === 'workflow-missing' ? 'WORKFLOW AUSENTE'
+      : runner.deployment.state === 'workflow-outdated' ? 'WORKFLOW ALTERADO'
+        : runner.deployment.state === 'invalid' ? 'RECONFIGURAR' : 'NÃO CONFIGURADO'
   return <article className={`runner-card ${running ? 'active' : ''}`}>
     <div className="runner-card-head">
       <div className="runner-logo"><GithubLogo weight="fill"/></div>
@@ -216,14 +238,42 @@ function RunnerCard({ runner, groupName, busy, onAction, onLogs, onRemove }: {
     </div>
     <div className="runner-path"><HardDrives/><span title={runner.installPath}>{runner.installPath}</span></div>
     <div className="runner-labels"><span>self-hosted</span><span>Windows</span><span>X64</span>{runner.labels.map((label) => <span key={label}>{label}</span>)}</div>
+    <div className={`runner-deploy ${deployReady ? 'ready' : ''}`}>
+      <div className="runner-deploy-icon">{deployReady ? <CheckCircle weight="fill"/> : <RocketLaunch/>}</div>
+      <div>
+        <strong>{deployLabel}</strong>
+        <span>{deployReady
+          ? `${runner.deployment.repository} → ${runner.deployment.projectPath}`
+          : runner.scope !== 'repository' ? 'Disponível para runners isolados por repositório.'
+            : !runner.projectGroupId ? 'Associe este runner a um projeto.'
+              : 'Prepare o executor e o workflow padrão.'}</span>
+        {runner.deployment.lastDeployAt && <small className={runner.deployment.lastDeployStatus === 'failed' ? 'failed' : ''}>
+          Último deploy: {runner.deployment.lastDeployStatus === 'success' ? 'sucesso' : 'falhou'} · {new Date(runner.deployment.lastDeployAt).toLocaleString('pt-BR')}
+        </small>}
+      </div>
+    </div>
     {runner.error && <p className="runner-card-error">{runner.error}</p>}
     <div className="card-actions runner-actions">
       <button className="action-button" disabled={busy} onClick={() => onAction(running ? 'stop' : 'start')}>{running ? <Pause weight="fill"/> : <Play weight="fill"/>}{running ? 'Parar' : 'Iniciar'}</button>
       <button className="action-button" disabled={busy || !running} onClick={() => onAction('restart')}><ArrowClockwise/>Reiniciar</button>
       <button className="action-button push-right" onClick={onLogs}><FolderOpen/>Logs</button>
+      {runner.scope === 'repository' && runner.projectGroupId && <button className="action-button" disabled={busy} onClick={onPrepare}><RocketLaunch/>{deployReady ? 'Reconfigurar' : 'Preparar deploy'}</button>}
+      {runner.deployment.workflowPath && runner.deployment.state !== 'not-configured' && <button className="icon-button" title="Mostrar workflow" onClick={onWorkflow}><FileCode/></button>}
       <button className="icon-button danger" title="Remover runner" disabled={busy} onClick={onRemove}><Trash/></button>
     </div>
   </article>
+}
+
+function DeploymentReadyModal({ result, onClose }: { result: GitHubRunnerPrepareDeploymentResult; onClose(): void }) {
+  return <div className="modal-backdrop" onMouseDown={onClose}>
+    <section className="modal deployment-ready-modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="modal-title"><div><span>DEPLOY AUTOMÁTICO</span><h2>Projeto preparado</h2></div><button type="button" className="icon-button" onClick={onClose}><X/></button></div>
+      <div className="deployment-success"><CheckCircle weight="fill"/><div><strong>Executor configurado e runner reiniciado</strong><span>O workflow padrão foi {result.workflowCreated ? 'gravado' : 'validado'} no clone local.</span></div></div>
+      <div className="deployment-result"><small>REPOSITÓRIO</small><strong>{result.repository}</strong><small>PROJETO NO SERVIDOR</small><strong>{result.projectPath}</strong><small>ARQUIVO PARA COMMIT</small><strong>{result.workflowPath}</strong></div>
+      <p>Agora faça commit e push do arquivo <code>.github/workflows/controle-run.yml</code>. Depois disso, todo push em <code>main</code> ou <code>master</code> atualizará este servidor.</p>
+      <div className="modal-actions"><button type="button" className="button primary" onClick={onClose}>Entendi</button></div>
+    </section>
+  </div>
 }
 
 export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
@@ -234,6 +284,8 @@ export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
   const [removing, setRemoving] = useState<GitHubRunnerView | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GitHubRunnerProgress | null>(null)
+  const [prepared, setPrepared] = useState<GitHubRunnerPrepareDeploymentResult | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const groupNames = useMemo(() => new Map(projectGroups.map((group) => [group.id, group.name])), [projectGroups])
   async function refresh() {
@@ -273,11 +325,36 @@ export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
     try { setState(await window.controleRun.removeGitHubRunner(removing.id, token)); setRemoving(null); onError(null) }
     finally { setBusyId(null) }
   }
+  async function prepare(runner: GitHubRunnerView, overwriteWorkflow = false) {
+    if (!overwriteWorkflow && !window.confirm(`Preparar o deploy automático de ${runner.name}? O runner será reiniciado e o workflow padrão será criado no projeto associado.`)) return
+    setBusyId(runner.id)
+    try {
+      const result = await window.controleRun.prepareGitHubRunnerDeployment(runner.id, overwriteWorkflow)
+      setState(result.state)
+      setPrepared(result)
+      onError(null)
+    } catch (error) {
+      const message = messageOf(error)
+      if (!overwriteWorkflow && message.includes('Confirme a substituição') && window.confirm(`${message}\n\nDeseja substituir o arquivo pelo modelo padrão?`)) {
+        setBusyId(null)
+        return prepare(runner, true)
+      }
+      onError(message)
+    } finally { setBusyId(null) }
+  }
+  async function copyWorkflow() {
+    try {
+      await window.controleRun.copyGitHubRunnerWorkflow()
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+      onError(null)
+    } catch (error) { onError(messageOf(error)) }
+  }
 
   return <>
     <section className="runner-hero">
       <div><p className="eyebrow">INFRAESTRUTURA</p><h2>GitHub Actions Runners</h2><p>Instale e mantenha agentes de automação como serviços independentes do Windows.</p></div>
-      <div className="hero-actions"><button className="button primary" onClick={openInstall}><Plus/>Novo runner</button><button className="button secondary" onClick={refresh}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div>
+      <div className="hero-actions"><button className="button secondary" onClick={copyWorkflow}><Copy/>{copied ? 'Workflow copiado' : 'Copiar workflow padrão'}</button><button className="button primary" onClick={openInstall}><Plus/>Novo runner</button><button className="button secondary" onClick={refresh}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div>
     </section>
     <div className="runner-notice"><ShieldCheck/><div><strong>Credenciais temporárias e instalação verificada</strong><span>Tokens e senhas não são persistidos. O pacote oficial é validado por SHA-256 antes da configuração.</span></div></div>
     {!state.runners.length
@@ -289,9 +366,12 @@ export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
         busy={busyId === runner.id}
         onAction={(command) => action(runner, command)}
         onLogs={() => window.controleRun.openGitHubRunnerLogs(runner.id).catch((error) => onError(messageOf(error)))}
+        onPrepare={() => prepare(runner)}
+        onWorkflow={() => window.controleRun.openGitHubRunnerWorkflow(runner.id).catch((error) => onError(messageOf(error)))}
         onRemove={() => setRemoving(runner)}
       />)}</section>}
     {showInstall && defaults && <InstallRunnerModal defaults={defaults} groups={projectGroups} progress={progress} installing={busyId === 'install'} onClose={() => setShowInstall(false)} onInstall={install}/>} 
     {removing && <RemoveRunnerModal runner={removing} removing={busyId === removing.id} onClose={() => setRemoving(null)} onRemove={remove}/>} 
+    {prepared && <DeploymentReadyModal result={prepared} onClose={() => setPrepared(null)}/>}
   </>
 }

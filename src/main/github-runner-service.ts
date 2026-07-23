@@ -16,7 +16,17 @@ import type {
   GitHubRunnerState,
   GitHubRunnerView
 } from '../shared/types'
-import { loadSettings, saveSettings } from './store'
+import {
+  CONTROL_RUN_DEPLOY_SCRIPT,
+  inspectRunnerDeployment,
+  projectRootForGroup,
+  readProjectGitHubRepository,
+  repositoryFromTargetUrl,
+  runnerDeploymentPaths,
+  servicesForGroup,
+  writeStandardWorkflow
+} from './deployment-service'
+import { loadSettings, saveSettings, type Settings } from './store'
 
 interface RunnerRelease {
   tag_name: string
@@ -34,7 +44,7 @@ interface RunnerPackage {
 interface AdminResult {
   ok: boolean
   message: string
-  data?: { serviceName?: string; cleanupWarning?: string }
+  data?: { serviceName?: string; cleanupWarning?: string; helperPath?: string }
 }
 
 type ProgressCallback = (progress: GitHubRunnerProgress) => void
@@ -46,13 +56,14 @@ const FALLBACK_PACKAGE: RunnerPackage = {
   sha256: 'eb65c95277af42bcf3778a799c41359d224ba2a67b4de26b7cea1729b09c803d'
 }
 
-const ADMIN_HELPER = String.raw`
+export const ADMIN_HELPER = String.raw`
 param(
   [Parameter(Mandatory=$true)][string]$RequestPath,
   [Parameter(Mandatory=$true)][string]$ResultPath
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $clearBytes = $null
 $request = $null
@@ -63,7 +74,14 @@ function Write-AdminResult([bool]$Ok, [string]$Message, $Data = $null) {
 }
 
 try {
+  for ($attempt = 0; $attempt -lt 50 -and -not (Test-Path -LiteralPath $RequestPath); $attempt++) {
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not (Test-Path -LiteralPath $RequestPath)) {
+    throw "A solicitação administrativa protegida não ficou disponível em: $RequestPath"
+  }
   $encryptedBytes = [System.IO.File]::ReadAllBytes($RequestPath)
+  Remove-Item -LiteralPath $RequestPath -Force -ErrorAction SilentlyContinue
   $clearBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
     $encryptedBytes,
     $null,
@@ -131,6 +149,36 @@ try {
     elseif ($request.action -eq 'restart') { Restart-Service -Name $serviceName -Force }
     else { throw 'Ação de serviço inválida.' }
     Write-AdminResult $true 'Ação concluída.' @{ serviceName = $serviceName }
+  }
+  elseif ($request.operation -eq 'configure-deploy') {
+    $installPath = [System.IO.Path]::GetFullPath([string]$request.installPath)
+    if (-not (Test-Path -LiteralPath (Join-Path $installPath '.runner') -PathType Leaf)) {
+      throw 'A pasta informada não contém um GitHub Actions Runner configurado.'
+    }
+    $deployDir = Join-Path $installPath '.controle-run'
+    New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
+    $scriptPath = Join-Path $deployDir 'deploy.ps1'
+    $configPath = Join-Path $deployDir 'deployment.json'
+    [System.IO.File]::WriteAllText($scriptPath, [string]$request.deployScript, $Utf8NoBom)
+    [System.IO.File]::WriteAllText($configPath, [string]$request.configJson, $Utf8NoBom)
+
+    $runnerEnvPath = Join-Path $installPath '.env'
+    $runnerEnv = @()
+    if (Test-Path -LiteralPath $runnerEnvPath) { $runnerEnv = @(Get-Content -LiteralPath $runnerEnvPath) }
+    $runnerEnv = @($runnerEnv | Where-Object { $_ -notmatch '^CONTROLE_RUN_DEPLOY_SCRIPT=' })
+    $runnerEnv += "CONTROLE_RUN_DEPLOY_SCRIPT=$scriptPath"
+    [System.IO.File]::WriteAllLines($runnerEnvPath, [string[]]$runnerEnv, $Utf8NoBom)
+
+    $serviceAccount = [string]$request.serviceAccount
+    if ($serviceAccount) {
+      & icacls.exe $deployDir /grant:r "\${serviceAccount}:(OI)(CI)M" /T /C | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw 'Não foi possível conceder acesso do executor ao diretório de deploy.' }
+    }
+
+    $serviceName = [string]$request.serviceName
+    if (-not $serviceName) { $serviceName = (Get-Content -LiteralPath (Join-Path $installPath '.service') -Raw).Trim() }
+    Restart-Service -Name $serviceName -Force
+    Write-AdminResult $true 'Deploy automático preparado e runner reiniciado.' @{ serviceName = $serviceName; helperPath = $scriptPath }
   }
   elseif ($request.operation -eq 'remove') {
     $installPath = [System.IO.Path]::GetFullPath([string]$request.installPath)
@@ -282,32 +330,61 @@ async function ensureAdminHelper() {
   return helperPath
 }
 
-async function protectAdminRequest(requestPath: string, request: unknown) {
+export async function protectAdminRequest(requestPath: string, request: unknown) {
+  await fs.mkdir(path.dirname(requestPath), { recursive: true })
+  const writingPath = `${requestPath}.${randomUUID()}.writing`
   const protector = String.raw`
-$plain = [Console]::In.ReadToEnd()
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Security
+$envelope = ([Console]::In.ReadToEnd() | ConvertFrom-Json)
+$plain = [string]$envelope.payload
 $bytes = [System.Text.Encoding]::UTF8.GetBytes($plain)
 $protected = [System.Security.Cryptography.ProtectedData]::Protect(
   $bytes,
   $null,
   [System.Security.Cryptography.DataProtectionScope]::LocalMachine
 )
-[System.IO.File]::WriteAllBytes($env:CONTROLE_RUN_REQUEST_PATH, $protected)
+[System.IO.File]::WriteAllBytes([string]$envelope.outputPath, $protected)
 [Array]::Clear($bytes, 0, $bytes.Length)
 `.trim()
-  const result = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', protector], {
-    env: { ...process.env, CONTROLE_RUN_REQUEST_PATH: requestPath },
-    input: JSON.stringify(request)
-  })
-  if (result.code !== 0) throw new Error(`Não foi possível proteger a solicitação administrativa. ${result.stderr.trim()}`)
+  try {
+    const result = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', protector], {
+      input: JSON.stringify({ outputPath: writingPath, payload: JSON.stringify(request) })
+    })
+    if (result.code !== 0) throw new Error(`Não foi possível proteger a solicitação administrativa. ${result.stderr.trim()}`)
+    const stat = await fs.stat(writingPath).catch(() => null)
+    if (!stat?.isFile() || stat.size === 0) {
+      const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join(' ')
+      throw new Error(`A solicitação administrativa protegida não foi gravada corretamente.${detail ? ` ${detail}` : ''}`)
+    }
+    await fs.rename(writingPath, requestPath)
+    await fs.access(requestPath)
+  } catch (error) {
+    await fs.unlink(writingPath).catch(() => undefined)
+    throw error
+  }
+}
+
+export function adminExchangePaths(basePath: string, operationId: string) {
+  const exchangeDir = path.join(basePath, 'runner-admin-exchange')
+  return {
+    exchangeDir,
+    requestPath: path.join(exchangeDir, `${operationId}.request.bin`),
+    resultPath: path.join(exchangeDir, `${operationId}.result.json`)
+  }
 }
 
 async function runElevated(request: unknown): Promise<AdminResult> {
   requireWindows()
   const helperPath = await ensureAdminHelper()
   const operationId = randomUUID()
-  const requestPath = path.join(app.getPath('temp'), `controle-run-${operationId}.bin`)
-  const resultPath = path.join(app.getPath('temp'), `controle-run-${operationId}.result.json`)
+  const { exchangeDir, requestPath, resultPath } = adminExchangePaths(app.getPath('userData'), operationId)
+  await fs.mkdir(exchangeDir, { recursive: true })
   await protectAdminRequest(requestPath, request)
+  const protectedRequest = await fs.stat(requestPath).catch(() => null)
+  if (!protectedRequest?.isFile() || protectedRequest.size === 0) {
+    throw new Error('A solicitação administrativa não ficou disponível para o processo elevado.')
+  }
   const launcher = String.raw`
 $arguments = @(
   '-NoProfile',
@@ -381,22 +458,34 @@ async function serviceStatus(name: string) {
   return 'unknown' as const
 }
 
+export function isRunnerVersionProbeLog(content: string) {
+  return /CommandLineParser].*arg:\s*version|CommandSettings].*Flag 'version':\s*'True'/i.test(content)
+}
+
 async function latestRunnerLog(installPath: string) {
   const diagPath = path.join(installPath, '_diag')
   const files = await fs.readdir(diagPath).catch(() => [])
-  const latest = files.filter((file) => /^Runner_.*\.log$/i.test(file)).sort().at(-1)
-  if (!latest) return null
-  const filePath = path.join(diagPath, latest)
-  const stat = await fs.stat(filePath).catch(() => null)
-  const content = await fs.readFile(filePath, 'utf8').catch(() => '')
-  return { content: content.slice(-250_000), modifiedAt: stat?.mtime.toISOString() }
+  const candidates = files.filter((file) => /^Runner_.*\.log$/i.test(file)).sort().reverse().slice(0, 100)
+  for (const candidate of candidates) {
+    const filePath = path.join(diagPath, candidate)
+    const content = await fs.readFile(filePath, 'utf8').catch(() => '')
+    if (!content || isRunnerVersionProbeLog(content)) continue
+    const stat = await fs.stat(filePath).catch(() => null)
+    return { content: content.slice(-250_000), modifiedAt: stat?.mtime.toISOString() }
+  }
+  return null
 }
 
 async function actualRunnerVersion(config: GitHubRunnerConfig) {
   const executable = path.join(config.installPath, 'bin', 'Runner.Listener.exe')
   try {
     await fs.access(executable)
-    const result = await runProcess(executable, ['--version'], { cwd: config.installPath })
+    const result = await runProcess('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "[System.Diagnostics.FileVersionInfo]::GetVersionInfo($env:CONTROLE_RUN_VERSION_FILE).ProductVersion"
+    ], { env: { ...process.env, CONTROLE_RUN_VERSION_FILE: executable } })
     const version = result.stdout.trim().match(/\d+\.\d+\.\d+/)?.[0]
     return version || config.installedVersion
   } catch {
@@ -404,15 +493,53 @@ async function actualRunnerVersion(config: GitHubRunnerConfig) {
   }
 }
 
-async function runnerView(config: GitHubRunnerConfig): Promise<GitHubRunnerView> {
+let pm2CommandCache: string | null | undefined
+let gitCommandCache: string | null | undefined
+
+async function resolvePm2Command() {
+  if (pm2CommandCache !== undefined) return pm2CommandCache || undefined
+  const candidates = [
+    process.env.APPDATA ? path.join(process.env.APPDATA, 'npm', 'pm2.cmd') : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'npm', 'pm2.cmd') : ''
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    try { await fs.access(candidate); pm2CommandCache = candidate; return candidate } catch { /* tenta o próximo */ }
+  }
+  const located = await runProcess('where.exe', ['pm2.cmd']).catch(() => null)
+  const first = located?.code === 0 ? located.stdout.split(/\r?\n/).map((item) => item.trim()).find(Boolean) : undefined
+  pm2CommandCache = first || null
+  return first
+}
+
+async function resolveGitCommand() {
+  if (gitCommandCache !== undefined) return gitCommandCache || undefined
+  const candidates = [
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'Git', 'cmd', 'git.exe') : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'Git', 'cmd', 'git.exe') : ''
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    try { await fs.access(candidate); gitCommandCache = candidate; return candidate } catch { /* tenta o próximo */ }
+  }
+  const located = await runProcess('where.exe', ['git.exe']).catch(() => null)
+  const first = located?.code === 0 ? located.stdout.split(/\r?\n/).map((item) => item.trim()).find(Boolean) : undefined
+  gitCommandCache = first || null
+  return first
+}
+
+async function runnerView(config: GitHubRunnerConfig, settings: Settings, commands?: { gitCommand: string; pm2Command: string }): Promise<GitHubRunnerView> {
   try {
     const name = await serviceName(config)
     const status = await serviceStatus(name)
-    const [log, installedVersion] = await Promise.all([latestRunnerLog(config.installPath), actualRunnerVersion(config)])
+    const [log, installedVersion, deployment] = await Promise.all([
+      latestRunnerLog(config.installPath),
+      actualRunnerVersion(config),
+      inspectRunnerDeployment(config, settings, commands)
+    ])
     const connected = status === 'running' && Boolean(log && /Listening for Jobs|Runner connect complete|Message listener created/i.test(log.content))
     return {
       ...config,
       installedVersion,
+      deployment,
       serviceName: name || config.serviceName,
       serviceStatus: status,
       connectionStatus: connected ? 'connected' : status === 'running' ? 'unknown' : 'offline',
@@ -421,6 +548,7 @@ async function runnerView(config: GitHubRunnerConfig): Promise<GitHubRunnerView>
   } catch (error) {
     return {
       ...config,
+      deployment: { state: 'invalid' },
       serviceStatus: 'unknown',
       connectionStatus: 'unknown',
       error: error instanceof Error ? error.message : String(error)
@@ -431,7 +559,9 @@ async function runnerView(config: GitHubRunnerConfig): Promise<GitHubRunnerView>
 export async function getGitHubRunnerState(): Promise<GitHubRunnerState> {
   requireWindows()
   const settings = await loadSettings()
-  return { runners: await Promise.all(Object.values(settings.githubRunners).map(runnerView)) }
+  const [gitCommand, pm2Command] = await Promise.all([resolveGitCommand(), resolvePm2Command()])
+  const commands = gitCommand && pm2Command ? { gitCommand, pm2Command } : undefined
+  return { runners: await Promise.all(Object.values(settings.githubRunners).map((runner) => runnerView(runner, settings, commands))) }
 }
 
 export function suggestedRunnerPath(name: string) {
@@ -513,6 +643,70 @@ export async function openGitHubRunnerLogs(id: string) {
   await fs.mkdir(diagPath, { recursive: true })
   const error = await shell.openPath(diagPath)
   if (error) throw new Error(error)
+}
+
+export async function prepareGitHubRunnerDeployment(id: string, overwriteWorkflow = false) {
+  requireWindows()
+  const settings = await loadSettings()
+  const runner = settings.githubRunners[id]
+  if (!runner) throw new Error('Runner não encontrado.')
+  if (runner.scope !== 'repository') throw new Error('O deploy automático isolado exige um runner com escopo de repositório.')
+  if (!runner.projectGroupId) throw new Error('Associe o runner a um projeto antes de preparar o deploy.')
+  if (runner.serviceAccount.toUpperCase() === 'NT AUTHORITY\\NETWORK SERVICE') {
+    throw new Error('Este runner usa Network Service. Reinstale-o usando a conta Windows que administra os processos PM2.')
+  }
+  const projectPath = projectRootForGroup(settings, runner.projectGroupId)
+  if (!projectPath) throw new Error('A pasta do projeto associado não está mais cadastrada.')
+  const services = servicesForGroup(settings, runner.projectGroupId)
+  if (!services.length) throw new Error('O projeto associado não possui serviços configurados.')
+  const repository = repositoryFromTargetUrl(runner.targetUrl)
+  const localRepository = await readProjectGitHubRepository(projectPath)
+  if (repository.toLowerCase() !== localRepository.toLowerCase()) {
+    throw new Error(`O runner pertence a ${repository}, mas a pasta associada é um clone de ${localRepository}.`)
+  }
+  const [gitCommand, pm2Command] = await Promise.all([resolveGitCommand(), resolvePm2Command()])
+  if (!gitCommand) throw new Error('O executável git.exe não foi encontrado para a conta atual do Windows.')
+  if (!pm2Command) throw new Error('O comando pm2.cmd não foi encontrado para a conta atual do Windows.')
+
+  const workflow = await writeStandardWorkflow(projectPath, overwriteWorkflow)
+  const configuredAt = new Date().toISOString()
+  const config = {
+    version: 1 as const,
+    repository,
+    projectPath,
+    serviceNames: services.map((service) => service.pm2Name),
+    gitCommand,
+    pm2Command,
+    configuredAt
+  }
+  const paths = runnerDeploymentPaths(runner.installPath)
+  await runElevated({
+    operation: 'configure-deploy',
+    installPath: runner.installPath,
+    serviceName: runner.serviceName,
+    serviceAccount: runner.serviceAccount,
+    deployScript: CONTROL_RUN_DEPLOY_SCRIPT,
+    configJson: JSON.stringify(config, null, 2)
+  })
+  await fs.access(paths.scriptPath)
+  return {
+    state: await getGitHubRunnerState(),
+    repository,
+    projectPath,
+    workflowPath: workflow.path,
+    workflowCreated: workflow.created
+  }
+}
+
+export async function openGitHubRunnerWorkflow(id: string) {
+  const settings = await loadSettings()
+  const runner = settings.githubRunners[id]
+  if (!runner?.projectGroupId) throw new Error('Runner ou projeto associado não encontrado.')
+  const projectPath = projectRootForGroup(settings, runner.projectGroupId)
+  if (!projectPath) throw new Error('A pasta do projeto associado não está mais cadastrada.')
+  const workflow = path.join(projectPath, '.github', 'workflows', 'controle-run.yml')
+  await fs.access(workflow).catch(() => { throw new Error('O workflow ainda não foi criado para este projeto.') })
+  shell.showItemInFolder(workflow)
 }
 
 export async function removeGitHubRunner(id: string, removalToken: string) {

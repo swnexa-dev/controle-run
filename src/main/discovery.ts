@@ -8,6 +8,16 @@ export interface DiscoveredProject extends ProjectConfig {
   availableScripts: string[]
 }
 
+export function mergeProjectConfig(item: DiscoveredProject, saved?: ProjectConfig): ProjectConfig {
+  return {
+    ...item,
+    ...saved,
+    path: item.path,
+    pm2Name: item.pm2Name,
+    npmCommand: saved?.npmScript === item.npmScript ? saved?.npmCommand || item.npmCommand : item.npmCommand
+  }
+}
+
 const ENTRY_CANDIDATES = ['index.js', 'server.js', 'app.js', 'main.js', 'dist/index.js', 'build/index.js']
 
 export function projectId(projectPath: string) {

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { discoverProjectFolder, discoverProjects, projectId } from './discovery'
+import { discoverProjectFolder, discoverProjects, mergeProjectConfig, projectId } from './discovery'
 import { readEnvFile, saveEnvFile } from './env-file'
 import { controlProject, disconnectPm2, getProcesses, removeProjectProcess, startProject } from './pm2-service'
 import { loadSettings, saveSettings } from './store'
@@ -46,14 +46,7 @@ async function buildState(): Promise<AppState> {
 
   const discovered = await discoverProjects(settings.projectPaths)
   for (const item of discovered) {
-    const saved = settings.projects[item.id]
-    settings.projects[item.id] = {
-      ...item,
-      ...saved,
-      path: item.path,
-      pm2Name: item.pm2Name,
-      npmCommand: saved?.npmScript === item.npmScript ? saved.npmCommand || item.npmCommand : item.npmCommand
-    }
+    settings.projects[item.id] = mergeProjectConfig(item, settings.projects[item.id])
   }
   await saveSettings(settings)
 

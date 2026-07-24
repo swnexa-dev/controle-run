@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { chooseNpmScript, discoverProjects, projectId } from './discovery'
+import { chooseNpmScript, discoverProjects, mergeProjectConfig, projectId } from './discovery'
 
 const temporaryFolders: string[] = []
 afterEach(async () => {
@@ -18,6 +18,16 @@ describe('discovery', () => {
   it('gera identificadores estáveis por caminho', () => {
     expect(projectId('C:/apps/api')).toBe(projectId('C:/apps/api'))
     expect(projectId('C:/apps/api')).not.toBe(projectId('C:/apps/web'))
+  })
+
+  it('carrega um serviço novo mesmo sem configuração salva', () => {
+    const discovered = {
+      id: 'service-1', groupId: 'group-1', groupName: 'Projeto', groupPath: 'C:\\apps\\projeto',
+      serviceType: 'root' as const, name: 'Projeto', path: 'C:\\apps\\projeto', pm2Name: 'controle-run-projeto',
+      mode: 'script' as const, entry: 'server.js', autoStart: true, detected: true, availableScripts: []
+    }
+    expect(() => mergeProjectConfig(discovered)).not.toThrow()
+    expect(mergeProjectConfig(discovered)).toMatchObject({ pm2Name: 'controle-run-projeto', entry: 'server.js' })
   })
 
   it('descobre frontend e backend como serviços separados do mesmo projeto', async () => {

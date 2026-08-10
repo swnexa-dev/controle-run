@@ -39,7 +39,6 @@
   "build": {
     "appId": "br.com.controlerun.app",
     "productName": "Controle Run",
-    "electronDist": "node_modules/electron/dist",
     "directories": {
       "buildResources": "build-resources",
       "output": "release"

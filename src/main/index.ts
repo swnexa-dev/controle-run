@@ -47,7 +47,8 @@ import type {
 import {
   appendRecoveryLog,
   isBackgroundRecovery,
-  recoveryLoginItem
+  recoveryLoginItem,
+  startupRecoveryIsEnabled
 } from './startup-recovery'
 
 async function migrateLegacyFolder(settings: Awaited<ReturnType<typeof loadSettings>>) {
@@ -437,8 +438,11 @@ function configureStartupRecovery() {
   const loginItem = recoveryLoginItem(process.execPath)
   app.setLoginItemSettings(loginItem)
   const actual = app.getLoginItemSettings({ path: loginItem.path, args: [...loginItem.args] })
-  if (!actual.openAtLogin || !actual.executableWillLaunchAtLogin) {
+  if (!startupRecoveryIsEnabled(actual, loginItem)) {
     throw new Error('O Windows não confirmou a entrada de recuperação automática do Controle Run.')
+  }
+  if (!actual.executableWillLaunchAtLogin) {
+    console.warn('O Windows confirmou a entrada de recuperação, mas o indicador genérico do executável ainda não foi atualizado.')
   }
 }
 

@@ -326,3 +326,9 @@ export async function saveSettings(settings: Settings) {
     attachMetadata(settings, requested)
   })
 }
+
+export async function clearSettings() {
+  return withStoreLock(async () => {
+    await writeSettingsUnlocked(cloneSettings(EMPTY))
+  })
+}

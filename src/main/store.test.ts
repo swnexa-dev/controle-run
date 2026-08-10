@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   app: { getPath: () => testState.userData }
 }))
 
-import { loadSettings, saveSettings, type Settings } from './store'
+import { clearSettings, loadSettings, saveSettings, type Settings } from './store'
 
 const temporaryDirectories: string[] = []
 
@@ -69,5 +69,15 @@ describe('settings.json resiliente', () => {
   it('rejeita conteúdo com formato inválido em vez de iniciar com cadastro vazio', async () => {
     await fs.writeFile(path.join(testState.userData, 'settings.json'), JSON.stringify({ projectPaths: 'inválido' }), 'utf8')
     await expect(loadSettings()).rejects.toThrow('Nenhum cadastro foi apagado ou substituído')
+  })
+
+  it('limpa intencionalmente o cadastro principal e o backup sem apagar arquivos externos', async () => {
+    await saveSettings(emptySettings(['C:\\apps\\portal']))
+
+    await clearSettings()
+
+    await expect(loadSettings()).resolves.toEqual(emptySettings())
+    const backup = JSON.parse(await fs.readFile(path.join(testState.userData, 'settings.json.bak'), 'utf8'))
+    expect(backup).toEqual(emptySettings())
   })
 })

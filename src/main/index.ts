@@ -6,7 +6,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { discoverProjectFolder, discoverProjects, mergeProjectConfig, projectId } from './discovery'
 import { readEnvFile, saveEnvFile } from './env-file'
 import { controlProject, disconnectPm2, getProcesses, removeProjectProcess, startProject } from './pm2-service'
-import { loadSettings, saveSettings } from './store'
+import { clearSettings, loadSettings, saveSettings } from './store'
 import { detectLocalUrl } from './urls'
 import {
   actionGitHubRunner,
@@ -237,6 +237,22 @@ function secureHandle<T extends unknown[]>(
 }
 
 function registerIpc() {
+  secureHandle('app:clear-data', async (_event, inputConfirmation: unknown) => {
+    const confirmation = stringOf(inputConfirmation, 'Confirmação', 20)
+    if (confirmation !== 'LIMPAR') throw new Error('Confirmação inválida. Digite LIMPAR para continuar.')
+    await clearSettings()
+    await mainWindow?.webContents.session.clearStorageData()
+    await mainWindow?.webContents.session.clearCache()
+    return buildState()
+  })
+  secureHandle('app:quit', () => {
+    setImmediate(() => {
+      disconnectPm2()
+      app.quit()
+      const forceExit = setTimeout(() => app.exit(0), 2_000)
+      forceExit.unref()
+    })
+  })
   secureHandle('state:get', () => buildState())
   secureHandle('project:add', async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory'], title: 'Selecione a pasta do projeto' })

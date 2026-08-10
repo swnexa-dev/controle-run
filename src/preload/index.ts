@@ -12,6 +12,8 @@ import type {
 } from '../shared/types'
 
 const api: ControleRunApi = {
+  clearAllData: (confirmation: string) => ipcRenderer.invoke('app:clear-data', confirmation),
+  quitApp: () => ipcRenderer.invoke('app:quit'),
   getState: () => ipcRenderer.invoke('state:get'),
   addProject: () => ipcRenderer.invoke('project:add'),
   removeProject: (groupId: string) => ipcRenderer.invoke('project:remove', groupId),

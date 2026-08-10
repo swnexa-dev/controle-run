@@ -265,6 +265,31 @@
   letter-spacing: 1px;
 }
 
+.app-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-action {
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #171a22;
+  color: #aeb4c0;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.header-action svg {
+  width: 15px;
+  height: 15px;
+}
+
 .icon-button.danger:hover {
   border-color: #71333a;
   color: #ff8790;
@@ -480,5 +505,12 @@ footer {
 
   .env-row {
     grid-template-columns: 1fr 1fr 34px;
+  }
+
+  .header-action {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
   }
 }

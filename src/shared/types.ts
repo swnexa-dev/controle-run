@@ -195,6 +195,8 @@ export interface EnvVarDraft {
 export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart'
 
 export interface ControleRunApi {
+  clearAllData(confirmation: string): Promise<AppState>
+  quitApp(): Promise<void>
   getState(): Promise<AppState>
   addProject(): Promise<AppState>
   removeProject(groupId: string): Promise<AppState>

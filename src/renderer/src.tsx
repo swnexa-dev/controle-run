@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowClockwise, ArrowLeft, ArrowSquareOut, CaretRight, FolderOpen, GearSix, Hammer, Pause, Play, Plus, Pulse, Trash, X } from '@phosphor-icons/react'
+import { ArrowClockwise, ArrowLeft, ArrowSquareOut, Broom, CaretRight, FolderOpen, GearSix, Hammer, Pause, Play, Plus, Pulse, SignOut, Trash, X } from '@phosphor-icons/react'
 import type { AppState, EnvVarDraft, ProjectAction, ProjectDraft, ProjectView } from '../shared/types'
 import './style.css'
 import './groups.css'
@@ -135,9 +135,32 @@ function App() {
   async function removeProject(groupId: string, name: string) { if (!window.confirm(`Remover ${name} do Controle Run? Os arquivos da pasta não serão apagados.`)) return; setLoading(true); try { setState(await window.controleRun.removeProject(groupId)); setError(null) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) } }
   async function action(project: ProjectView, command: ProjectAction) { setBusyId(project.id); try { setState(await window.controleRun.action(project.id, command)); setError(null) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusyId(null) } }
   async function save(draft: ProjectDraft, variables: EnvVarDraft[]) { setBusyId(draft.id); try { await window.controleRun.saveEnv(draft.id, variables); setState(await window.controleRun.configure(draft)); setEditing(null); setError(null) } catch (e) { setError(String(e)) } finally { setBusyId(null) } }
+  async function clearAllData() {
+    const warning = 'Isso apagará todos os cadastros e preferências do Controle Run. Pastas dos projetos, processos PM2, runners instalados e túneis existentes não serão removidos e poderão continuar em execução.\n\nDigite LIMPAR para confirmar:'
+    const confirmation = window.prompt(warning)
+    if (confirmation === null) return
+    setLoading(true)
+    try {
+      const cleanState = await window.controleRun.clearAllData(confirmation.trim())
+      setState(cleanState)
+      setActivePage('projects')
+      setSelectedGroupId(null)
+      setEditing(null)
+      setError(null)
+      window.alert('Os dados locais do Controle Run foram limpos. Recursos externos não foram removidos.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+  function quitApp() {
+    if (!window.confirm('Fechar o Controle Run? Projetos, runners e túneis configurados para funcionar em segundo plano continuarão ativos.')) return
+    void window.controleRun.quitApp()
+  }
   return <main>
     <div className="window-titlebar" aria-hidden="true"><span>CONTROLE RUN</span><i/></div>
-    <header><div className="header-left"><div className="brand"><div className="brand-mark"><Pulse weight="bold"/></div><div><h1>Controle <span>Run</span></h1><p>PROCESS MANAGER</p></div></div><nav className="app-nav"><button className={activePage === 'projects' ? 'active' : ''} onClick={() => setActivePage('projects')}>Projetos</button><button className={activePage === 'runners' ? 'active' : ''} onClick={() => { setActivePage('runners'); setSelectedGroupId(null) }}>Runners GitHub</button><button className={activePage === 'tunnels' ? 'active' : ''} onClick={() => { setActivePage('tunnels'); setSelectedGroupId(null) }}>Túneis</button></nav></div></header>
+    <header><div className="header-left"><div className="brand"><div className="brand-mark"><Pulse weight="bold"/></div><div><h1>Controle <span>Run</span></h1><p>PROCESS MANAGER</p></div></div><nav className="app-nav"><button className={activePage === 'projects' ? 'active' : ''} onClick={() => setActivePage('projects')}>Projetos</button><button className={activePage === 'runners' ? 'active' : ''} onClick={() => { setActivePage('runners'); setSelectedGroupId(null) }}>Runners GitHub</button><button className={activePage === 'tunnels' ? 'active' : ''} onClick={() => { setActivePage('tunnels'); setSelectedGroupId(null) }}>Túneis</button></nav></div><div className="app-controls"><button className="header-action danger" disabled={loading} onClick={clearAllData} title="Apagar cadastros e preferências locais"><Broom/>Limpar todos os dados</button><button className="header-action" onClick={quitApp} title="Fechar o Controle Run"><SignOut/>Fechar aplicação</button></div></header>
     {error && <div className="error-banner"><span>{error}</span><button onClick={() => setError(null)}><X/></button></div>}
     {activePage === 'projects' ? <>
       {selectedGroup ? <section className="detail-hero"><button className="back-button" onClick={() => setSelectedGroupId(null)}><ArrowLeft/>Voltar</button><div><p className="eyebrow">DETALHES DO PROJETO</p><h2>{selectedGroup.name}</h2><p>{selectedGroup.services[0]?.groupPath}</p></div><div className="hero-actions"><button className="button secondary" onClick={() => window.controleRun.openFolder(selectedGroup.services[0].id)}><FolderOpen/>Abrir pasta</button><button className="button secondary" onClick={refresh} disabled={!state.projectPaths.length}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div></section> : <section className="hero"><div><p className="eyebrow">VISÃO GERAL</p><h2>Seus projetos, sob controle.</h2><p>Adicione pastas de projetos e abra uma pasta para ver frontend e backend separadamente.</p></div><div className="hero-actions"><button className="button primary" onClick={addProject}><Plus/>Adicionar projeto</button><button className="button secondary" onClick={refresh} disabled={!state.projectPaths.length}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div></section>}

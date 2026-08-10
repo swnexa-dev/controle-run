@@ -1,29 +1,35 @@
 {
   "name": "controle-run",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "private": true,
   "description": "Gerenciador desktop local-first de projetos PM2 e GitHub Actions Runners",
   "author": "Controle Run",
   "main": "dist-electron/main/index.js",
   "scripts": {
+    "prepare": "npm run admin-helper:prepare",
+    "predev": "npm run admin-helper:prepare",
     "dev": "electron-vite dev",
+    "prebuild": "npm run admin-helper:prepare",
     "build": "tsc --noEmit && electron-vite build",
     "preview": "electron-vite preview",
+    "pretest": "npm run admin-helper:prepare",
     "test": "vitest run",
-    "package:win": "npm run build && electron-builder --win nsis"
+    "admin-helper:prepare": "node scripts/prepare-admin-helper.cjs",
+    "icon:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon.ps1",
+    "package:win": "npm run icon:win && npm run build && electron-builder --win nsis"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
-    "pm2": "^6.0.8",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "pm2": "7.0.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
-    "@types/react": "^19.1.12",
-    "@types/react-dom": "^19.1.9",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "^5.0.2",
-    "electron": "^37.3.1",
+    "electron": "43.3.0",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.0",
     "typescript": "^5.9.2",
@@ -35,6 +41,7 @@
     "productName": "Controle Run",
     "electronDist": "node_modules/electron/dist",
     "directories": {
+      "buildResources": "build-resources",
       "output": "release"
     },
     "files": [
@@ -46,8 +53,25 @@
     "asarUnpack": [
       "node_modules/pm2/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build-resources/icons/app-icon.png",
+        "to": "icons/app-icon.png"
+      },
+      {
+        "from": "build-resources/admin/runner-admin-helper.ps1",
+        "to": "admin/runner-admin-helper.ps1"
+      }
+    ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build-resources/icons/app-icon.ico"
+    },
+    "nsis": {
+      "perMachine": true,
+      "installerIcon": "build-resources/icons/app-icon.ico",
+      "uninstallerIcon": "build-resources/icons/app-icon.ico",
+      "installerHeaderIcon": "build-resources/icons/app-icon.ico"
     }
   }
 }

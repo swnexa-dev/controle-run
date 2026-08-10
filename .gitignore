@@ -6,6 +6,8 @@ dist/
 dist-electron/
 release/
 out/
+build-resources/admin/
+src/main/admin-helper-integrity.generated.ts
 
 # Tests and tool caches
 coverage/

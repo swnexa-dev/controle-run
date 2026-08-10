@@ -1,6 +1,6 @@
 import { app, shell } from 'electron'
 import { spawn } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto'
 import { createReadStream, createWriteStream, promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -22,11 +22,17 @@ import {
   projectRootForGroup,
   readProjectGitHubRepository,
   repositoryFromTargetUrl,
+  runnerRoutingLabel,
   runnerDeploymentPaths,
   servicesForGroup,
   writeStandardWorkflow
 } from './deployment-service'
 import { loadSettings, saveSettings, type Settings } from './store'
+import {
+  ADMIN_HELPER_PUBLIC_KEY,
+  ADMIN_HELPER_SHA256,
+  ADMIN_HELPER_SIGNATURE
+} from './admin-helper-integrity.generated'
 
 interface RunnerRelease {
   tag_name: string
@@ -44,7 +50,7 @@ interface RunnerPackage {
 interface AdminResult {
   ok: boolean
   message: string
-  data?: { serviceName?: string; cleanupWarning?: string; helperPath?: string }
+  data?: { serviceName?: string; managementId?: string; cleanupWarning?: string; helperPath?: string }
 }
 
 type ProgressCallback = (progress: GitHubRunnerProgress) => void
@@ -65,12 +71,153 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$Utf8WithBom = New-Object System.Text.UTF8Encoding($true)
 $clearBytes = $null
 $request = $null
 
 function Write-AdminResult([bool]$Ok, [string]$Message, $Data = $null) {
   $payload = @{ ok = $Ok; message = $Message; data = $Data } | ConvertTo-Json -Depth 8
   [System.IO.File]::WriteAllText($ResultPath, $payload, $Utf8NoBom)
+}
+
+function Assert-NoReparsePoint([string]$PathValue) {
+  $probe = $PathValue
+  while (-not (Test-Path -LiteralPath $probe)) {
+    $parent = Split-Path -Parent $probe
+    if (-not $parent -or $parent -eq $probe) { break }
+    $probe = $parent
+  }
+  $item = Get-Item -LiteralPath $probe -Force -ErrorAction Stop
+  while ($item) {
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      throw "O caminho administrativo não pode atravessar links ou junções: $($item.FullName)"
+    }
+    $item = $item.Parent
+  }
+}
+
+function Resolve-SafeRunnerPath([string]$Value) {
+  if (-not $Value) { throw 'O diretório do runner não foi informado.' }
+  $fullPath = [System.IO.Path]::GetFullPath($Value).TrimEnd('\')
+  $root = [System.IO.Path]::GetPathRoot($fullPath).TrimEnd('\')
+  if (-not $fullPath -or $fullPath -ieq $root) { throw 'Não é permitido usar a raiz do disco como diretório do runner.' }
+
+  $programFilesX86 = [System.Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+  $blocked = @($env:windir, $env:ProgramFiles, $programFilesX86, $env:ProgramData) |
+    Where-Object { $_ } |
+    ForEach-Object { [System.IO.Path]::GetFullPath([string]$_).TrimEnd('\') }
+  foreach ($blockedPath in $blocked) {
+    if ($fullPath -ieq $blockedPath -or $fullPath.StartsWith($blockedPath + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "O runner não pode ser instalado ou removido dentro de uma pasta protegida do Windows: $blockedPath"
+    }
+  }
+  Assert-NoReparsePoint $fullPath
+  return $fullPath
+}
+
+function Get-RunnerIdentity([string]$InstallPath, [string]$ExpectedName, [string]$ExpectedTargetUrl) {
+  $configPath = Join-Path $InstallPath 'config.cmd'
+  $runnerPath = Join-Path $InstallPath '.runner'
+  $servicePath = Join-Path $InstallPath '.service'
+  if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $runnerPath -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $servicePath -PathType Leaf)) {
+    throw 'O diretório informado não contém uma instalação completa administrada do GitHub Actions Runner.'
+  }
+
+  $metadata = Get-Content -LiteralPath $runnerPath -Raw | ConvertFrom-Json
+  $actualName = [string]$metadata.agentName
+  $actualTarget = ([string]$metadata.gitHubUrl).TrimEnd('/')
+  if (-not $actualName -or -not $actualTarget) { throw 'A identidade do runner local é inválida ou está incompleta.' }
+  if ($ExpectedName -and $actualName -ine $ExpectedName) { throw 'O nome salvo não corresponde à identidade do runner instalado.' }
+  if ($ExpectedTargetUrl -and $actualTarget -ine $ExpectedTargetUrl.TrimEnd('/')) { throw 'O repositório salvo não corresponde à identidade do runner instalado.' }
+
+  $serviceName = (Get-Content -LiteralPath $servicePath -Raw).Trim()
+  if ($serviceName -notmatch '^actions\.runner\.[a-zA-Z0-9._-]+$') { throw 'O nome do serviço registrado pelo runner é inválido.' }
+
+  $escapedServiceName = $serviceName.Replace("'", "''")
+  $service = Get-CimInstance Win32_Service -Filter "Name='$escapedServiceName'" -ErrorAction Stop
+  if (-not $service) { throw 'O serviço registrado pelo runner não existe no Windows.' }
+  $expectedExecutable = [System.IO.Path]::GetFullPath((Join-Path $InstallPath 'bin\RunnerService.exe'))
+  $serviceCommand = ([string]$service.PathName).Trim()
+  $executableMatch = [System.Text.RegularExpressions.Regex]::Match($serviceCommand, '^"([^"]+)"')
+  $actualExecutable = if ($executableMatch.Success) { $executableMatch.Groups[1].Value } else { $serviceCommand.Split(' ')[0] }
+  if ([System.IO.Path]::GetFullPath($actualExecutable) -ine $expectedExecutable -or -not (Test-Path -LiteralPath $expectedExecutable -PathType Leaf)) {
+    throw 'O executável do serviço não pertence ao diretório informado do runner.'
+  }
+  return @{ ServiceName = $serviceName; Name = $actualName; TargetUrl = $actualTarget }
+}
+
+function Assert-ProtectedMarkerAcl([string]$MarkerPath) {
+  $acl = Get-Acl -LiteralPath $MarkerPath
+  $ownerSid = $acl.Owner
+  try { $ownerSid = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { }
+  if ($ownerSid -notin @('S-1-5-18', 'S-1-5-32-544')) { throw 'O marcador administrativo do runner não pertence aos Administradores do Windows.' }
+
+  $allowedSids = @('S-1-5-18', 'S-1-5-32-544')
+  $writeMask = [System.Security.AccessControl.FileSystemRights]::Write -bor
+    [System.Security.AccessControl.FileSystemRights]::Modify -bor
+    [System.Security.AccessControl.FileSystemRights]::FullControl
+  foreach ($rule in $acl.Access) {
+    $sid = $rule.IdentityReference.Value
+    try { $sid = ([System.Security.Principal.NTAccount]$rule.IdentityReference).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { }
+    if ($rule.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
+        ($rule.FileSystemRights -band $writeMask) -ne 0 -and
+        $sid -notin $allowedSids) {
+      throw 'O marcador administrativo do runner pode ser modificado por uma conta não autorizada.'
+    }
+  }
+}
+
+function Confirm-ManagementMarker([string]$InstallPath, [string]$ManagementId, [bool]$AllowLegacyAdoption) {
+  if ($ManagementId -notmatch '^[a-f0-9-]{36}$') { throw 'A identidade administrativa do runner é inválida.' }
+  $markerPath = Join-Path $InstallPath '.controle-run-managed.json'
+  if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+    if (-not $AllowLegacyAdoption) { throw 'Este runner não possui o marcador administrativo protegido. Reinstale ou adote novamente o runner.' }
+    $markerJson = @{ version = 1; managementId = $ManagementId; createdAt = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($markerPath, $markerJson, $Utf8NoBom)
+    & icacls.exe $markerPath /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Não foi possível restringir o marcador administrativo do runner.' }
+    & icacls.exe $markerPath /setowner '*S-1-5-32-544' /C | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Não foi possível proteger o marcador administrativo do runner.' }
+  }
+  Assert-NoReparsePoint $markerPath
+  Assert-ProtectedMarkerAcl $markerPath
+  $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+  if ([int]$marker.version -ne 1 -or [string]$marker.managementId -ine $ManagementId) {
+    throw 'O marcador administrativo não corresponde ao cadastro local do runner.'
+  }
+  return $ManagementId
+}
+
+function Wait-RunnerService([string]$Name, [System.ServiceProcess.ServiceControllerStatus]$ExpectedStatus) {
+  $service = Get-Service -Name $Name -ErrorAction Stop
+  $service.WaitForStatus($ExpectedStatus, [TimeSpan]::FromSeconds(30))
+  $service.Refresh()
+  if ($service.Status -ne $ExpectedStatus) {
+    throw "O serviço $Name não alcançou o estado $ExpectedStatus."
+  }
+}
+
+function Start-RunnerService([string]$Name) {
+  $service = Get-Service -Name $Name -ErrorAction Stop
+  if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Running) {
+    Start-Service -Name $Name
+    Wait-RunnerService $Name ([System.ServiceProcess.ServiceControllerStatus]::Running)
+  }
+}
+
+function Stop-RunnerService([string]$Name) {
+  $service = Get-Service -Name $Name -ErrorAction Stop
+  if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+    Stop-Service -Name $Name -Force
+    Wait-RunnerService $Name ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
+  }
+}
+
+function Restart-RunnerService([string]$Name) {
+  Stop-RunnerService $Name
+  Start-RunnerService $Name
 }
 
 try {
@@ -91,7 +238,16 @@ try {
   $request = $requestJson | ConvertFrom-Json
 
   if ($request.operation -eq 'install') {
-    $installPath = [System.IO.Path]::GetFullPath([string]$request.installPath)
+    $installPath = Resolve-SafeRunnerPath ([string]$request.installPath)
+    $zipPath = [System.IO.Path]::GetFullPath([string]$request.zipPath)
+    if ([System.IO.Path]::GetExtension($zipPath) -ine '.zip' -or -not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+      throw 'O pacote do runner não é um arquivo ZIP válido.'
+    }
+    Assert-NoReparsePoint $zipPath
+    $expectedPackageSha256 = ([string]$request.packageSha256).ToLowerInvariant()
+    if ($expectedPackageSha256 -notmatch '^[a-f0-9]{64}$') { throw 'O SHA-256 esperado do pacote é inválido.' }
+    $actualPackageSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualPackageSha256 -ne $expectedPackageSha256) { throw 'O pacote do runner foi alterado depois da validação inicial.' }
     if (Test-Path -LiteralPath $installPath) {
       $existing = Get-ChildItem -LiteralPath $installPath -Force | Select-Object -First 1
       if ($existing) { throw 'A pasta de instalação precisa estar vazia.' }
@@ -99,7 +255,7 @@ try {
       New-Item -ItemType Directory -Path $installPath -Force | Out-Null
     }
 
-    Expand-Archive -LiteralPath ([string]$request.zipPath) -DestinationPath $installPath -Force
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $installPath -Force
     $configPath = Join-Path $installPath 'config.cmd'
     if (-not (Test-Path -LiteralPath $configPath)) { throw 'O pacote extraído não contém config.cmd.' }
 
@@ -134,33 +290,34 @@ try {
 
     $serviceFile = Join-Path $installPath '.service'
     if (-not (Test-Path -LiteralPath $serviceFile)) { throw 'O runner foi configurado, mas o serviço do Windows não foi criado.' }
-    $serviceName = (Get-Content -LiteralPath $serviceFile -Raw).Trim()
-    $service = Get-Service -Name $serviceName -ErrorAction Stop
-    if ($service.Status -ne 'Running') { Start-Service -Name $serviceName }
-    Write-AdminResult $true 'Runner instalado e serviço iniciado.' @{ serviceName = $serviceName }
+    $identity = Get-RunnerIdentity $installPath ([string]$request.name) ([string]$request.targetUrl)
+    $serviceName = [string]$identity.ServiceName
+    $managementId = Confirm-ManagementMarker $installPath ([string]$request.managementId) $true
+    Start-RunnerService $serviceName
+    Write-AdminResult $true 'Runner instalado e serviço iniciado.' @{ serviceName = $serviceName; managementId = $managementId }
   }
   elseif ($request.operation -eq 'service') {
-    $serviceName = [string]$request.serviceName
-    if (-not $serviceName) {
-      $serviceName = (Get-Content -LiteralPath (Join-Path ([string]$request.installPath) '.service') -Raw).Trim()
-    }
-    if ($request.action -eq 'start') { Start-Service -Name $serviceName }
-    elseif ($request.action -eq 'stop') { Stop-Service -Name $serviceName -Force }
-    elseif ($request.action -eq 'restart') { Restart-Service -Name $serviceName -Force }
+    $installPath = Resolve-SafeRunnerPath ([string]$request.installPath)
+    $identity = Get-RunnerIdentity $installPath ([string]$request.expectedName) ([string]$request.expectedTargetUrl)
+    $serviceName = [string]$identity.ServiceName
+    if ($request.serviceName -and $serviceName -ine [string]$request.serviceName) { throw 'O serviço salvo não corresponde ao runner instalado.' }
+    $managementId = Confirm-ManagementMarker $installPath ([string]$request.managementId) ([bool]$request.allowLegacyAdoption)
+    if ($request.action -eq 'start') { Start-RunnerService $serviceName }
+    elseif ($request.action -eq 'stop') { Stop-RunnerService $serviceName }
+    elseif ($request.action -eq 'restart') { Restart-RunnerService $serviceName }
     else { throw 'Ação de serviço inválida.' }
-    Write-AdminResult $true 'Ação concluída.' @{ serviceName = $serviceName }
+    Write-AdminResult $true 'Ação concluída.' @{ serviceName = $serviceName; managementId = $managementId }
   }
   elseif ($request.operation -eq 'configure-deploy') {
-    $installPath = [System.IO.Path]::GetFullPath([string]$request.installPath)
-    if (-not (Test-Path -LiteralPath (Join-Path $installPath '.runner') -PathType Leaf)) {
-      throw 'A pasta informada não contém um GitHub Actions Runner configurado.'
-    }
+    $installPath = Resolve-SafeRunnerPath ([string]$request.installPath)
+    $identity = Get-RunnerIdentity $installPath ([string]$request.expectedName) ([string]$request.expectedTargetUrl)
+    $managementId = Confirm-ManagementMarker $installPath ([string]$request.managementId) ([bool]$request.allowLegacyAdoption)
     $deployDir = Join-Path $installPath '.controle-run'
     New-Item -ItemType Directory -Path $deployDir -Force | Out-Null
     $scriptPath = Join-Path $deployDir 'deploy.ps1'
     $configPath = Join-Path $deployDir 'deployment.json'
-    [System.IO.File]::WriteAllText($scriptPath, [string]$request.deployScript, $Utf8NoBom)
-    [System.IO.File]::WriteAllText($configPath, [string]$request.configJson, $Utf8NoBom)
+    [System.IO.File]::WriteAllText($scriptPath, [string]$request.deployScript, $Utf8WithBom)
+    [System.IO.File]::WriteAllText($configPath, [string]$request.configJson, $Utf8WithBom)
 
     $runnerEnvPath = Join-Path $installPath '.env'
     $runnerEnv = @()
@@ -175,13 +332,16 @@ try {
       if ($LASTEXITCODE -ne 0) { throw 'Não foi possível conceder acesso do executor ao diretório de deploy.' }
     }
 
-    $serviceName = [string]$request.serviceName
-    if (-not $serviceName) { $serviceName = (Get-Content -LiteralPath (Join-Path $installPath '.service') -Raw).Trim() }
-    Restart-Service -Name $serviceName -Force
-    Write-AdminResult $true 'Deploy automático preparado e runner reiniciado.' @{ serviceName = $serviceName; helperPath = $scriptPath }
+    $serviceName = [string]$identity.ServiceName
+    if ($request.serviceName -and $serviceName -ine [string]$request.serviceName) { throw 'O serviço salvo não corresponde ao runner instalado.' }
+    Restart-RunnerService $serviceName
+    Write-AdminResult $true 'Deploy automático preparado e runner reiniciado.' @{ serviceName = $serviceName; helperPath = $scriptPath; managementId = $managementId }
   }
   elseif ($request.operation -eq 'remove') {
-    $installPath = [System.IO.Path]::GetFullPath([string]$request.installPath)
+    $installPath = Resolve-SafeRunnerPath ([string]$request.installPath)
+    $identity = Get-RunnerIdentity $installPath ([string]$request.expectedName) ([string]$request.expectedTargetUrl)
+    if ($request.serviceName -and [string]$identity.ServiceName -ine [string]$request.serviceName) { throw 'O serviço salvo não corresponde ao runner instalado.' }
+    $managementId = Confirm-ManagementMarker $installPath ([string]$request.managementId) ([bool]$request.allowLegacyAdoption)
     $configPath = Join-Path $installPath 'config.cmd'
     if (-not (Test-Path -LiteralPath $configPath)) { throw 'config.cmd não foi encontrado na instalação.' }
     Push-Location $installPath
@@ -323,11 +483,37 @@ function runProcess(file: string, args: string[], options: { cwd?: string; env?:
   })
 }
 
-async function ensureAdminHelper() {
-  const helperPath = path.join(app.getPath('userData'), 'runner-admin-helper.ps1')
-  await fs.mkdir(path.dirname(helperPath), { recursive: true })
-  await fs.writeFile(helperPath, ADMIN_HELPER, 'utf8')
-  return helperPath
+function windowsPowerShellPath() {
+  return path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+}
+
+async function validateAdminHelper() {
+  const adminDirectory = app.isPackaged
+    ? path.join(process.resourcesPath, 'admin')
+    : path.join(app.getAppPath(), 'build-resources', 'admin')
+  const helperPath = path.join(adminDirectory, 'runner-admin-helper.ps1')
+  const [realDirectory, realHelper, helperStat] = await Promise.all([
+    fs.realpath(adminDirectory),
+    fs.realpath(helperPath),
+    fs.lstat(helperPath)
+  ]).catch(() => { throw new Error('O helper administrativo protegido não foi encontrado. Reinstale o Controle Run.') })
+  const relative = path.relative(realDirectory, realHelper)
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || helperStat.isSymbolicLink()) {
+    throw new Error('O caminho do helper administrativo foi adulterado.')
+  }
+
+  const content = await fs.readFile(realHelper)
+  const sha256 = createHash('sha256').update(content).digest('hex')
+  const signatureValid = verify(
+    'sha256',
+    content,
+    createPublicKey(ADMIN_HELPER_PUBLIC_KEY),
+    Buffer.from(ADMIN_HELPER_SIGNATURE, 'base64')
+  )
+  if (sha256 !== ADMIN_HELPER_SHA256 || !signatureValid) {
+    throw new Error('A assinatura do helper administrativo é inválida. Reinstale o Controle Run antes de continuar.')
+  }
+  return { helperPath: realHelper, sha256 }
 }
 
 export async function protectAdminRequest(requestPath: string, request: unknown) {
@@ -337,8 +523,7 @@ export async function protectAdminRequest(requestPath: string, request: unknown)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
 $envelope = ([Console]::In.ReadToEnd() | ConvertFrom-Json)
-$plain = [string]$envelope.payload
-$bytes = [System.Text.Encoding]::UTF8.GetBytes($plain)
+$bytes = [System.Convert]::FromBase64String([string]$envelope.payloadBase64)
 $protected = [System.Security.Cryptography.ProtectedData]::Protect(
   $bytes,
   $null,
@@ -349,7 +534,10 @@ $protected = [System.Security.Cryptography.ProtectedData]::Protect(
 `.trim()
   try {
     const result = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', protector], {
-      input: JSON.stringify({ outputPath: writingPath, payload: JSON.stringify(request) })
+      input: JSON.stringify({
+        outputPath: writingPath,
+        payloadBase64: Buffer.from(JSON.stringify(request), 'utf8').toString('base64')
+      })
     })
     if (result.code !== 0) throw new Error(`Não foi possível proteger a solicitação administrativa. ${result.stderr.trim()}`)
     const stat = await fs.stat(writingPath).catch(() => null)
@@ -376,7 +564,9 @@ export function adminExchangePaths(basePath: string, operationId: string) {
 
 async function runElevated(request: unknown): Promise<AdminResult> {
   requireWindows()
-  const helperPath = await ensureAdminHelper()
+  const helper = await validateAdminHelper()
+  const powershellPath = windowsPowerShellPath()
+  await fs.access(powershellPath).catch(() => { throw new Error('O Windows PowerShell protegido não foi encontrado no System32.') })
   const operationId = randomUUID()
   const { exchangeDir, requestPath, resultPath } = adminExchangePaths(app.getPath('userData'), operationId)
   await fs.mkdir(exchangeDir, { recursive: true })
@@ -385,23 +575,39 @@ async function runElevated(request: unknown): Promise<AdminResult> {
   if (!protectedRequest?.isFile() || protectedRequest.size === 0) {
     throw new Error('A solicitação administrativa não ficou disponível para o processo elevado.')
   }
+  const elevatedBootstrap = String.raw`
+$ErrorActionPreference = 'Stop'
+$helperBytes = [System.IO.File]::ReadAllBytes($env:CONTROLE_RUN_HELPER)
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+  $actualHash = ([System.BitConverter]::ToString($sha256.ComputeHash($helperBytes))).Replace('-', '').ToLowerInvariant()
+} finally {
+  $sha256.Dispose()
+}
+if ($actualHash -ne $env:CONTROLE_RUN_HELPER_SHA256) { throw 'A integridade do helper administrativo mudou durante a elevação.' }
+$helperText = [System.Text.Encoding]::UTF8.GetString($helperBytes).TrimStart([char]0xFEFF)
+$helperScript = [System.Management.Automation.ScriptBlock]::Create($helperText)
+& $helperScript -RequestPath $env:CONTROLE_RUN_REQUEST -ResultPath $env:CONTROLE_RUN_RESULT
+`.trim()
+  const encodedBootstrap = Buffer.from(elevatedBootstrap, 'utf16le').toString('base64')
   const launcher = String.raw`
 $arguments = @(
   '-NoProfile',
   '-NonInteractive',
   '-ExecutionPolicy', 'Bypass',
-  '-File', ('"' + $env:CONTROLE_RUN_HELPER + '"'),
-  '-RequestPath', ('"' + $env:CONTROLE_RUN_REQUEST + '"'),
-  '-ResultPath', ('"' + $env:CONTROLE_RUN_RESULT + '"')
+  '-EncodedCommand', $env:CONTROLE_RUN_ELEVATED_BOOTSTRAP
 )
-$process = Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+$process = Start-Process -FilePath $env:CONTROLE_RUN_POWERSHELL -ArgumentList $arguments -Verb RunAs -Wait -PassThru -WindowStyle Hidden
 exit $process.ExitCode
 `.trim()
   try {
-    const elevated = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', launcher], {
+    const elevated = await runProcess(powershellPath, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', launcher], {
       env: {
         ...process.env,
-        CONTROLE_RUN_HELPER: helperPath,
+        CONTROLE_RUN_HELPER: helper.helperPath,
+        CONTROLE_RUN_HELPER_SHA256: helper.sha256,
+        CONTROLE_RUN_ELEVATED_BOOTSTRAP: encodedBootstrap,
+        CONTROLE_RUN_POWERSHELL: powershellPath,
         CONTROLE_RUN_REQUEST: requestPath,
         CONTROLE_RUN_RESULT: resultPath
       }
@@ -593,21 +799,27 @@ export async function installGitHubRunner(draft: GitHubRunnerInstallDraft, progr
 
   const pkg = await latestRunnerPackage()
   const zipPath = await downloadRunnerPackage(pkg, progress)
+  const managementId = randomUUID()
+  const id = createHash('sha1').update(`${normalized.targetUrl}|${normalized.name}|${normalized.installPath}`.toLowerCase()).digest('hex').slice(0, 12)
+  const routingLabel = runnerRoutingLabel({ id })
+  const effectiveLabels = [...new Map([...normalized.labels, routingLabel].map((label) => [label.toLowerCase(), label])).values()]
+  if (effectiveLabels.length > 100) throw new Error('O runner aceita no máximo 100 labels, incluindo a label exclusiva criada pelo Controle Run.')
   progress({ stage: 'elevating', message: 'Aguardando autorização administrativa do Windows...' })
   const admin = await runElevated({
     operation: 'install',
     zipPath,
+    packageSha256: pkg.sha256,
     installPath: normalized.installPath,
     targetUrl: normalized.targetUrl,
     registrationToken: draft.registrationToken.trim(),
+    managementId,
     name: normalized.name,
     workFolder: normalized.workFolder,
-    labels: normalized.labels,
+    labels: effectiveLabels,
     windowsAccount: normalized.windowsAccount,
     windowsPassword: draft.serviceAccount === 'custom' ? draft.windowsPassword : undefined
   })
   progress({ stage: 'configuring', message: 'Salvando o cadastro local do runner...' })
-  const id = createHash('sha1').update(`${normalized.targetUrl}|${normalized.name}|${normalized.installPath}`.toLowerCase()).digest('hex').slice(0, 12)
   settings.githubRunners[id] = {
     id,
     name: normalized.name,
@@ -615,9 +827,11 @@ export async function installGitHubRunner(draft: GitHubRunnerInstallDraft, progr
     targetUrl: normalized.targetUrl,
     installPath: normalized.installPath,
     workFolder: normalized.workFolder,
-    labels: normalized.labels,
+    labels: effectiveLabels,
+    routingLabel,
     serviceAccount: normalized.windowsAccount,
     serviceName: admin.data?.serviceName,
+    managementId: admin.data?.managementId || managementId,
     installedVersion: pkg.version,
     projectGroupId: draft.projectGroupId || undefined,
     createdAt: new Date().toISOString()
@@ -631,7 +845,21 @@ export async function actionGitHubRunner(id: string, action: GitHubRunnerAction)
   const settings = await loadSettings()
   const runner = settings.githubRunners[id]
   if (!runner) throw new Error('Runner não encontrado.')
-  await runElevated({ operation: 'service', action, installPath: runner.installPath, serviceName: runner.serviceName })
+  const managementId = runner.managementId || randomUUID()
+  const admin = await runElevated({
+    operation: 'service',
+    action,
+    installPath: runner.installPath,
+    serviceName: runner.serviceName,
+    expectedName: runner.name,
+    expectedTargetUrl: runner.targetUrl,
+    managementId,
+    allowLegacyAdoption: !runner.managementId
+  })
+  if (!runner.managementId && admin.data?.managementId) {
+    runner.managementId = admin.data.managementId
+    await saveSettings(settings)
+  }
   return getGitHubRunnerState()
 }
 
@@ -668,26 +896,45 @@ export async function prepareGitHubRunnerDeployment(id: string, overwriteWorkflo
   if (!gitCommand) throw new Error('O executável git.exe não foi encontrado para a conta atual do Windows.')
   if (!pm2Command) throw new Error('O comando pm2.cmd não foi encontrado para a conta atual do Windows.')
 
-  const workflow = await writeStandardWorkflow(projectPath, overwriteWorkflow)
+  const routingLabel = runnerRoutingLabel(runner)
+  if (!runner.routingLabel || !runner.labels.some((label) => label.toLowerCase() === routingLabel)) {
+    throw new Error(`Este runner foi criado antes do roteamento exclusivo. Reinstale-o pelo Controle Run para registrar a label ${routingLabel} no GitHub.`)
+  }
+  const workflow = await writeStandardWorkflow(projectPath, overwriteWorkflow, routingLabel)
   const configuredAt = new Date().toISOString()
   const config = {
-    version: 1 as const,
+    version: 2 as const,
     repository,
     projectPath,
-    serviceNames: services.map((service) => service.pm2Name),
+    services: services.map((service) => ({
+      name: service.pm2Name,
+      relativePath: path.relative(projectPath, service.path) || '.',
+      buildScript: service.buildScript,
+      buildOnDeploy: Boolean(service.buildScript && service.buildOnDeploy),
+      installDependenciesOnDeploy: service.installDependenciesOnDeploy !== false
+    })),
     gitCommand,
     pm2Command,
     configuredAt
   }
   const paths = runnerDeploymentPaths(runner.installPath)
-  await runElevated({
+  const managementId = runner.managementId || randomUUID()
+  const admin = await runElevated({
     operation: 'configure-deploy',
     installPath: runner.installPath,
     serviceName: runner.serviceName,
+    expectedName: runner.name,
+    expectedTargetUrl: runner.targetUrl,
+    managementId,
+    allowLegacyAdoption: !runner.managementId,
     serviceAccount: runner.serviceAccount,
     deployScript: CONTROL_RUN_DEPLOY_SCRIPT,
     configJson: JSON.stringify(config, null, 2)
   })
+  if (!runner.managementId && admin.data?.managementId) {
+    runner.managementId = admin.data.managementId
+    await saveSettings(settings)
+  }
   await fs.access(paths.scriptPath)
   return {
     state: await getGitHubRunnerState(),
@@ -714,7 +961,17 @@ export async function removeGitHubRunner(id: string, removalToken: string) {
   const settings = await loadSettings()
   const runner = settings.githubRunners[id]
   if (!runner) throw new Error('Runner não encontrado.')
-  const result = await runElevated({ operation: 'remove', installPath: runner.installPath, removalToken: removalToken.trim() })
+  const managementId = runner.managementId || randomUUID()
+  const result = await runElevated({
+    operation: 'remove',
+    installPath: runner.installPath,
+    serviceName: runner.serviceName,
+    expectedName: runner.name,
+    expectedTargetUrl: runner.targetUrl,
+    managementId,
+    allowLegacyAdoption: !runner.managementId,
+    removalToken: removalToken.trim()
+  })
   delete settings.githubRunners[id]
   await saveSettings(settings)
   if (result.data?.cleanupWarning) console.warn('Runner removido, mas a pasta não pôde ser apagada:', result.data.cleanupWarning)

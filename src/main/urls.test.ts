@@ -14,6 +14,8 @@ const project: ProjectConfig = {
   mode: 'npm',
   npmScript: 'start',
   npmCommand: 'node server.js',
+  buildOnDeploy: false,
+  installDependenciesOnDeploy: true,
   autoStart: true,
   detected: true
 }

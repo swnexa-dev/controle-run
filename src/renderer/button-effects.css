@@ -1,0 +1,86 @@
+button {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease,
+    transform 90ms ease;
+}
+
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:not(:disabled):hover {
+  border-color: #3a4b4a;
+  background-color: #20272a;
+  color: #f7fffb;
+  box-shadow: 0 5px 16px #00000035, inset 0 0 0 1px #50e3a41c;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(.98);
+  box-shadow: 0 2px 7px #00000035;
+}
+
+button:focus-visible {
+  outline: 2px solid #50e3a4;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+.button.primary:not(:disabled):hover {
+  border-color: #8cf7c8;
+  background: #6cebb4;
+  color: #04110b;
+  box-shadow: 0 7px 20px #50e3a438;
+}
+
+.button.secondary:not(:disabled):hover,
+.action-button:not(:disabled):hover,
+.icon-button:not(:disabled):hover,
+.back-button:not(:disabled):hover {
+  border-color: #3e6657;
+  background: #202b28;
+  color: #71edb8;
+}
+
+.app-nav button:not(:disabled):hover {
+  background: #18231f;
+  color: #71edb8;
+  box-shadow: inset 0 0 0 1px #315848;
+}
+
+.app-nav button.active:not(:disabled):hover {
+  background: #24312d;
+  color: #f4fff9;
+}
+
+.icon-button.danger:not(:disabled):hover,
+.danger-button:not(:disabled):hover {
+  border-color: #8b4049;
+  background: #432127;
+  color: #ff9ca3 !important;
+  box-shadow: 0 5px 16px #5f172538;
+}
+
+.project-identity button:not(:disabled):hover {
+  background: transparent;
+  color: #71edb8;
+  box-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.project-identity button:not(:disabled):active {
+  transform: none;
+}
+
+.error-banner button:not(:disabled):hover {
+  background: #54252c;
+  color: #fff;
+  box-shadow: none;
+}

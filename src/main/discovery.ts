@@ -14,7 +14,10 @@ export function mergeProjectConfig(item: DiscoveredProject, saved?: ProjectConfi
     ...saved,
     path: item.path,
     pm2Name: item.pm2Name,
-    npmCommand: saved?.npmScript === item.npmScript ? saved?.npmCommand || item.npmCommand : item.npmCommand
+    npmCommand: saved?.npmScript === item.npmScript ? saved?.npmCommand || item.npmCommand : item.npmCommand,
+    buildScript: saved?.buildScript && item.availableScripts.includes(saved.buildScript) ? saved.buildScript : item.buildScript,
+    buildOnDeploy: saved?.buildOnDeploy ?? item.buildOnDeploy,
+    installDependenciesOnDeploy: saved?.installDependenciesOnDeploy ?? item.installDependenciesOnDeploy
   }
 }
 
@@ -37,6 +40,7 @@ async function inspectService(projectPath: string, groupPath: string, groupName:
   const scripts = Object.keys(pkg.scripts ?? {})
   const npmScript = chooseNpmScript(pkg.scripts)
   const npmCommand = npmScript ? pkg.scripts?.[npmScript] : undefined
+  const buildScript = pkg.scripts?.build ? 'build' : undefined
   let entry = pkg.main
   if (!npmScript && !entry) {
     for (const candidate of ENTRY_CANDIDATES) {
@@ -66,6 +70,9 @@ async function inspectService(projectPath: string, groupPath: string, groupName:
     mode: npmScript ? 'npm' : 'script',
     npmScript,
     npmCommand,
+    buildScript,
+    buildOnDeploy: Boolean(buildScript),
+    installDependenciesOnDeploy: true,
     entry,
     autoStart: Boolean(npmScript || entry),
     detected: Boolean(npmScript || entry),

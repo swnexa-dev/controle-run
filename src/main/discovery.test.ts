@@ -24,7 +24,7 @@ describe('discovery', () => {
     const discovered = {
       id: 'service-1', groupId: 'group-1', groupName: 'Projeto', groupPath: 'C:\\apps\\projeto',
       serviceType: 'root' as const, name: 'Projeto', path: 'C:\\apps\\projeto', pm2Name: 'controle-run-projeto',
-      mode: 'script' as const, entry: 'server.js', autoStart: true, detected: true, availableScripts: []
+      mode: 'script' as const, entry: 'server.js', buildOnDeploy: false, installDependenciesOnDeploy: true, autoStart: true, detected: true, availableScripts: []
     }
     expect(() => mergeProjectConfig(discovered)).not.toThrow()
     expect(mergeProjectConfig(discovered)).toMatchObject({ pm2Name: 'controle-run-projeto', entry: 'server.js' })
@@ -46,5 +46,6 @@ describe('discovery', () => {
     expect(services.map((service) => service.serviceType)).toEqual(['frontend', 'backend'])
     expect(new Set(services.map((service) => service.groupId)).size).toBe(1)
     expect(new Set(services.map((service) => service.pm2Name)).size).toBe(2)
+    expect(services.every((service) => service.installDependenciesOnDeploy)).toBe(true)
   })
 })

@@ -63,8 +63,6 @@ export async function saveEnvFile(projectPath: string, variables: EnvVarDraft[])
     throw error
   })
 
-  if (existing) await fs.writeFile(path.join(projectPath, '.env.backup'), existing, 'utf8')
-
   const lines = parseEnv(existing.replace(/\r?\n$/, ''))
     .map((line) => {
       if (line.type === 'raw') return line.text

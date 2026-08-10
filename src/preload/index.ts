@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ControleRunApi,
+  CloudflareTunnelAction,
+  CloudflareTunnelDraft,
   EnvVarDraft,
   GitHubRunnerAction,
   GitHubRunnerInstallDraft,
@@ -34,7 +36,15 @@ const api: ControleRunApi = {
     const listener = (_event: Electron.IpcRendererEvent, progress: GitHubRunnerProgress) => callback(progress)
     ipcRenderer.on('runner:progress', listener)
     return () => ipcRenderer.removeListener('runner:progress', listener)
-  }
+  },
+  getCloudflareTunnels: () => ipcRenderer.invoke('tunnel:state'),
+  installCloudflared: () => ipcRenderer.invoke('tunnel:install-cloudflared'),
+  addCloudflareTunnel: (draft: CloudflareTunnelDraft) => ipcRenderer.invoke('tunnel:add', draft),
+  actionCloudflareTunnel: (id: string, action: CloudflareTunnelAction) => ipcRenderer.invoke('tunnel:action', id, action),
+  removeCloudflareTunnel: (id: string) => ipcRenderer.invoke('tunnel:remove', id),
+  openCloudflareTunnelLogs: (id: string) => ipcRenderer.invoke('tunnel:open-logs', id),
+  openCloudflareTunnelUrl: (id: string) => ipcRenderer.invoke('tunnel:open-url', id),
+  copyCloudflareTunnelUrl: (id: string) => ipcRenderer.invoke('tunnel:copy-url', id)
 }
 
 contextBridge.exposeInMainWorld('controleRun', api)

@@ -1,10 +1,12 @@
 import { execFile } from 'node:child_process'
+import { createHash, createPublicKey, verify } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { ADMIN_HELPER, adminExchangePaths, isRunnerVersionProbeLog, normalizeGitHubTarget, protectAdminRequest, sanitizeRunnerName, selectWindowsRunnerPackage, suggestedRunnerPath } from './github-runner-service'
+import { ADMIN_HELPER_PUBLIC_KEY, ADMIN_HELPER_SHA256, ADMIN_HELPER_SIGNATURE } from './admin-helper-integrity.generated'
 
 const execute = promisify(execFile)
 
@@ -50,22 +52,76 @@ describe('GitHub runner configuration', () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'controle-run-admin-test-'))
     const requestPath = path.join(directory, 'request.bin')
     try {
-      await protectAdminRequest(requestPath, { registrationToken: 'temporary-test-token' })
+      const request = {
+        registrationToken: 'temporary-test-token',
+        deployScript: 'Falha com código, configuração e ação.'
+      }
+      await protectAdminRequest(requestPath, request)
       const protectedContent = await fs.readFile(requestPath)
       expect(protectedContent.length).toBeGreaterThan(0)
       expect(protectedContent.toString('utf8')).not.toContain('temporary-test-token')
+
+      const unprotect = String.raw`
+Add-Type -AssemblyName System.Security
+$encrypted = [System.IO.File]::ReadAllBytes($env:REQUEST_PATH)
+$clear = [System.Security.Cryptography.ProtectedData]::Unprotect(
+  $encrypted,
+  $null,
+  [System.Security.Cryptography.DataProtectionScope]::LocalMachine
+)
+[Console]::Write([System.Convert]::ToBase64String($clear))
+`.trim()
+      const { stdout } = await execute('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-Command', unprotect
+      ], { env: { ...process.env, REQUEST_PATH: requestPath } })
+      expect(JSON.parse(Buffer.from(stdout.trim(), 'base64').toString('utf8'))).toEqual(request)
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it.runIf(process.platform === 'win32')('keeps the elevated helper valid PowerShell after deployment changes', async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'controle-run-helper-test-'))
-    const helperPath = path.join(directory, 'helper.ps1')
+    const helperPath = path.resolve('build-resources', 'admin', 'runner-admin-helper.ps1')
+    const helperBytes = await fs.readFile(helperPath)
+    const helperText = helperBytes.toString('utf8').replace(/^\uFEFF/, '')
+    expect(helperText).toBe(ADMIN_HELPER)
+    expect(helperText).toContain('Resolve-SafeRunnerPath')
+    expect(helperText).toContain('Get-RunnerIdentity')
+    expect(helperText).toContain('Get-FileHash -LiteralPath $zipPath -Algorithm SHA256')
+    expect(helperText).toContain('WaitForStatus($ExpectedStatus, [TimeSpan]::FromSeconds(30))')
+    expect(createHash('sha256').update(helperBytes).digest('hex')).toBe(ADMIN_HELPER_SHA256)
+    expect(verify('sha256', helperBytes, createPublicKey(ADMIN_HELPER_PUBLIC_KEY), Buffer.from(ADMIN_HELPER_SIGNATURE, 'base64'))).toBe(true)
+    const parser = "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:HELPER_SCRIPT,[ref]$tokens,[ref]$errors) | Out-Null; if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
+    await expect(execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parser], { env: { ...process.env, HELPER_SCRIPT: helperPath } })).resolves.toBeTruthy()
+  })
+
+  it.runIf(process.platform === 'win32')('rejects an arbitrary protected folder before a runner removal', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'controle-run-remove-guard-'))
+    const requestPath = path.join(directory, 'request.bin')
+    const resultPath = path.join(directory, 'result.json')
+    const helperPath = path.resolve('build-resources', 'admin', 'runner-admin-helper.ps1')
     try {
-      await fs.writeFile(helperPath, ADMIN_HELPER, 'utf8')
-      const parser = "$tokens=$null; $errors=$null; [System.Management.Automation.Language.Parser]::ParseFile($env:HELPER_SCRIPT,[ref]$tokens,[ref]$errors) | Out-Null; if ($errors.Count) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
-      await expect(execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', parser], { env: { ...process.env, HELPER_SCRIPT: helperPath } })).resolves.toBeTruthy()
+      await protectAdminRequest(requestPath, {
+        operation: 'remove',
+        installPath: process.env.SystemRoot || 'C:\\Windows',
+        expectedName: 'runner-test',
+        expectedTargetUrl: 'https://github.com/example/project',
+        removalToken: 'temporary-token'
+      })
+      await execute('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', helperPath,
+        '-RequestPath', requestPath,
+        '-ResultPath', resultPath
+      ]).catch(() => undefined)
+      const result = JSON.parse(await fs.readFile(resultPath, 'utf8')) as { ok: boolean; message: string }
+      expect(result.ok).toBe(false)
+      expect(result.message).toContain('pasta protegida do Windows')
     } finally {
       await fs.rm(directory, { recursive: true, force: true })
     }

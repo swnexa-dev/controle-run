@@ -12,6 +12,9 @@ export interface ProjectConfig {
   mode: 'npm' | 'script'
   npmScript?: string
   npmCommand?: string
+  buildScript?: string
+  buildOnDeploy: boolean
+  installDependenciesOnDeploy: boolean
   entry?: string
   args?: string
   autoStart: boolean
@@ -43,6 +46,57 @@ export type GitHubRunnerServiceStatus = 'running' | 'stopped' | 'missing' | 'unk
 export type GitHubRunnerConnectionStatus = 'connected' | 'offline' | 'unknown'
 export type GitHubRunnerAction = 'start' | 'stop' | 'restart'
 
+export type CloudflareTunnelMode = 'quick' | 'token'
+export type CloudflareTunnelProtocol = 'auto' | 'quic' | 'http2'
+export type CloudflareTunnelAction = 'start' | 'stop' | 'restart'
+
+export interface CloudflareTunnelConfig {
+  id: string
+  name: string
+  projectId: string
+  originUrl: string
+  publicUrl?: string
+  mode: CloudflareTunnelMode
+  protocol: CloudflareTunnelProtocol
+  logLevel: 'debug' | 'info' | 'warn' | 'error'
+  autoStart: boolean
+  createdAt: string
+}
+
+export interface StoredCloudflareTunnelConfig extends CloudflareTunnelConfig {
+  encryptedToken?: string
+}
+
+export interface CloudflareTunnelView extends CloudflareTunnelConfig {
+  status: ProcessStatus
+  connectionStatus: 'connected' | 'connecting' | 'offline' | 'error'
+  hasToken: boolean
+  pid?: number
+  uptime: number
+  restarts: number
+  logPath: string
+  error?: string
+}
+
+export interface CloudflareTunnelDraft {
+  name: string
+  projectId: string
+  originUrl: string
+  publicUrl?: string
+  mode: CloudflareTunnelMode
+  token?: string
+  protocol: CloudflareTunnelProtocol
+  logLevel: 'debug' | 'info' | 'warn' | 'error'
+  autoStart: boolean
+}
+
+export interface CloudflareTunnelState {
+  tunnels: CloudflareTunnelView[]
+  cloudflaredInstalled: boolean
+  cloudflaredVersion?: string
+  cloudflaredPath?: string
+}
+
 export interface GitHubRunnerConfig {
   id: string
   name: string
@@ -51,8 +105,10 @@ export interface GitHubRunnerConfig {
   installPath: string
   workFolder: string
   labels: string[]
+  routingLabel?: string
   serviceAccount: string
   serviceName?: string
+  managementId?: string
   installedVersion: string
   projectGroupId?: string
   createdAt: string
@@ -123,6 +179,9 @@ export interface ProjectDraft {
   name: string
   mode: 'npm' | 'script'
   npmScript?: string
+  buildScript?: string
+  buildOnDeploy: boolean
+  installDependenciesOnDeploy: boolean
   entry?: string
   args?: string
   autoStart: boolean
@@ -133,7 +192,7 @@ export interface EnvVarDraft {
   value: string
 }
 
-export type ProjectAction = 'start' | 'stop' | 'restart'
+export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart'
 
 export interface ControleRunApi {
   getState(): Promise<AppState>
@@ -157,4 +216,12 @@ export interface ControleRunApi {
   openGitHubRunnerWorkflow(id: string): Promise<void>
   removeGitHubRunner(id: string, removalToken: string): Promise<GitHubRunnerState>
   onGitHubRunnerProgress(callback: (progress: GitHubRunnerProgress) => void): () => void
+  getCloudflareTunnels(): Promise<CloudflareTunnelState>
+  installCloudflared(): Promise<CloudflareTunnelState>
+  addCloudflareTunnel(draft: CloudflareTunnelDraft): Promise<CloudflareTunnelState>
+  actionCloudflareTunnel(id: string, action: CloudflareTunnelAction): Promise<CloudflareTunnelState>
+  removeCloudflareTunnel(id: string): Promise<CloudflareTunnelState>
+  openCloudflareTunnelLogs(id: string): Promise<void>
+  openCloudflareTunnelUrl(id: string): Promise<void>
+  copyCloudflareTunnelUrl(id: string): Promise<void>
 }

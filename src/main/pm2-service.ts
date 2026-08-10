@@ -7,7 +7,7 @@ import type { ProjectAction, ProjectConfig } from '../shared/types'
 const connect = () => new Promise<void>((resolve, reject) => pm2.connect((error) => error ? reject(error) : resolve()))
 const list = () => new Promise<pm2.ProcessDescription[]>((resolve, reject) => pm2.list((error, value) => error ? reject(error) : resolve(value)))
 const remove = (name: string) => new Promise<void>((resolve, reject) => pm2.delete(name, (error) => error ? reject(error) : resolve()))
-const runAction = (name: string, action: ProjectAction) => new Promise<void>((resolve, reject) => {
+const runAction = (name: string, action: Exclude<ProjectAction, 'build-restart'>) => new Promise<void>((resolve, reject) => {
   const callback = (error?: Error | null) => error ? reject(error) : resolve()
   if (action === 'start') pm2.restart(name, callback)
   else if (action === 'restart') pm2.restart(name, callback)
@@ -105,12 +105,20 @@ export function buildStartOptions(project: ProjectConfig, hiddenRunnerPath = run
   return options
 }
 
-function launchMatches(processInfo: pm2.ProcessDescription, options: pm2.StartOptions) {
+function normalizedArgs(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return value.map(String)
+  return value ? [String(value)] : []
+}
+
+export function launchMatches(processInfo: pm2.ProcessDescription, options: pm2.StartOptions) {
   const currentScript = processInfo.pm2_env?.pm_exec_path
   const expectedScript = options.script
   if (!currentScript || !expectedScript || path.basename(currentScript).toLowerCase() !== path.basename(expectedScript).toLowerCase()) return false
-  const currentArgs = (processInfo.pm2_env as { args?: string[] } | undefined)?.args || []
-  const expectedArgs = options.args || []
+  const currentCwd = (processInfo.pm2_env as { pm_cwd?: string } | undefined)?.pm_cwd
+  const expectedCwd = options.cwd
+  if (currentCwd && expectedCwd && path.resolve(currentCwd).toLowerCase() !== path.resolve(expectedCwd).toLowerCase()) return false
+  const currentArgs = normalizedArgs((processInfo.pm2_env as { args?: string | string[] } | undefined)?.args)
+  const expectedArgs = normalizedArgs(options.args)
   return JSON.stringify(currentArgs) === JSON.stringify(expectedArgs)
 }
 
@@ -122,22 +130,60 @@ export async function startProject(project: ProjectConfig) {
 }
 
 export async function controlProject(project: ProjectConfig, action: ProjectAction) {
+  if (action === 'build-restart') throw new Error('A ação de build deve ser executada pelo serviço de build.')
   await ensureConnection()
   const processes = await list()
   const current = processes.find((process) => process.name === project.pm2Name)
   if ((action === 'start' || action === 'restart') && current) {
+    const options = buildStartOptions(project, await ensureRunner())
+    if (launchMatches(current, options)) return runAction(project.pm2Name, action)
     await remove(project.pm2Name)
-    return startProject(project)
+    await new Promise<void>((resolve, reject) => pm2.start(options, (error) => error ? reject(error) : resolve()))
+    return
   }
   if (action === 'start' && !current) return startProject(project)
   if (!current) throw new Error('O projeto ainda não foi iniciado pelo Controle Run.')
   return runAction(project.pm2Name, action)
 }
 
-export async function removeProjectProcess(project: ProjectConfig) {
+export async function controlManagedProcess(name: string, options: pm2.StartOptions, action: 'start' | 'stop' | 'restart') {
   await ensureConnection()
   const processes = await list()
-  if (processes.some((process) => process.name === project.pm2Name)) await remove(project.pm2Name)
+  const current = processes.find((process) => process.name === name)
+  if (action === 'stop') {
+    if (!current) throw new Error('O processo ainda não foi iniciado.')
+    return runAction(name, 'stop')
+  }
+  if (current && launchMatches(current, options)) return runAction(name, action)
+  if (current) await remove(name)
+  await new Promise<void>((resolve, reject) => pm2.start(options, (error) => error ? reject(error) : resolve()))
+}
+
+export async function removeManagedProcess(name: string) {
+  await ensureConnection()
+  const processes = await list()
+  if (!processes.some((process) => process.name === name)) return
+  await remove(name)
+  await waitForManagedProcessRemoval(name, list)
+}
+
+export async function removeProjectProcess(project: ProjectConfig) {
+  await removeManagedProcess(project.pm2Name)
+}
+
+export async function waitForManagedProcessRemoval(
+  name: string,
+  readProcesses: () => Promise<Array<{ name?: string }>>,
+  options: { attempts?: number; intervalMs?: number } = {}
+) {
+  const attempts = options.attempts ?? 20
+  const intervalMs = options.intervalMs ?? 150
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const processes = await readProcesses()
+    if (!processes.some((process) => process.name === name)) return
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+  throw new Error(`O processo ${name} ainda aparece no PM2 após a tentativa de remoção. O cadastro foi preservado.`)
 }
 
 export function disconnectPm2() {

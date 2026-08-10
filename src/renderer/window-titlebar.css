@@ -1,0 +1,48 @@
+:root {
+  --window-titlebar-height: 48px;
+  --window-controls-width: 138px;
+}
+
+main {
+  padding-top: var(--window-titlebar-height);
+}
+
+.window-titlebar {
+  position: fixed;
+  z-index: 100;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--window-titlebar-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 calc(var(--window-controls-width) + 18px) 0 18px;
+  border-bottom: 1px solid #1c2029;
+  background: #0b0d12;
+  color: #596273;
+  font: 600 9px monospace;
+  letter-spacing: 1.5px;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.window-titlebar i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px #50e3a477;
+}
+
+button,
+input,
+select,
+a {
+  -webkit-app-region: no-drag;
+}
+
+header {
+  position: relative;
+  z-index: 1;
+}

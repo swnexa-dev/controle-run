@@ -1,0 +1,25 @@
+.build-settings {
+  display: grid;
+  gap: 2px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid #29303b;
+  border-radius: 9px;
+  background: #0f1218;
+}
+
+.build-settings > div span {
+  color: var(--green);
+  font: 600 9px monospace;
+  letter-spacing: 1.4px;
+}
+
+.build-settings > div p {
+  margin: 4px 0 8px;
+  color: #747d8e;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.build-settings label { margin: 8px 0; }
+.build-settings .toggle input:disabled { opacity: .45; }

@@ -1,0 +1,38 @@
+.tunnel-hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; padding:54px 0 28px; }
+.tunnel-hero h2 { margin:8px 0; font-size:32px; letter-spacing:-1.2px; }
+.tunnel-hero p { margin:0; color:#858c9c; font-size:14px; }
+.cloudflared-banner { display:flex; align-items:center; gap:12px; margin-bottom:22px; padding:14px 16px; border:1px solid #4c3f25; border-radius:10px; background:#211c11; color:#e4b95a; }
+.cloudflared-banner.ready { border-color:#285542; background:#112219; color:var(--green); }
+.cloudflared-banner > svg { width:25px; height:25px; flex:none; }
+.cloudflared-banner div { display:grid; gap:3px; min-width:0; }
+.cloudflared-banner strong { font-size:12px; }
+.cloudflared-banner span { overflow:hidden; color:#8f96a4; font:10px monospace; text-overflow:ellipsis; white-space:nowrap; }
+.tunnel-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.tunnel-card { padding:20px; border:1px solid var(--line); border-radius:12px; background:linear-gradient(150deg,#141720,#101219); }
+.tunnel-card.active { border-color:#285542; box-shadow:inset 0 1px #50e3a414; }
+.tunnel-card-head { display:flex; align-items:center; gap:11px; }
+.tunnel-card-head > div:nth-child(2) { min-width:0; flex:1; }
+.tunnel-card-head h3 { margin:0; font-size:15px; }
+.tunnel-card-head p { margin:3px 0 0; overflow:hidden; color:#6f7788; font:10px monospace; text-overflow:ellipsis; white-space:nowrap; }
+.tunnel-mark { width:38px; height:38px; display:grid; place-items:center; border-radius:10px; background:#19232b; color:#7ac8ff; }
+.tunnel-mark svg { width:22px; height:22px; }
+.tunnel-meta { display:grid; grid-template-columns:repeat(4,1fr); margin:18px 0 14px; }
+.tunnel-meta > div { min-width:0; padding-right:8px; border-right:1px solid var(--line); }
+.tunnel-meta > div:last-child { border:0; }
+.tunnel-meta small,.tunnel-route small { display:block; margin-bottom:5px; color:#697183; font:500 8px monospace; letter-spacing:1px; }
+.tunnel-meta strong { font:600 11px monospace; }
+.tunnel-route { margin-top:8px; padding:10px 12px; border-radius:7px; background:#0d0f14; }
+.tunnel-route strong { display:block; overflow:hidden; color:#aeb5c2; font:10px monospace; text-overflow:ellipsis; white-space:nowrap; }
+.tunnel-route.public { display:flex; align-items:center; justify-content:space-between; gap:10px; border:1px solid #214b3a; background:#102018; }
+.tunnel-route.public > div:first-child { min-width:0; flex:1; }
+.tunnel-route.public > div:last-child { display:flex; gap:6px; }
+.tunnel-route.public strong { color:#8ce0ba; }
+.tunnel-route.public.pending { border-color:#292e39; background:#10131a; }
+.tunnel-route.public.pending strong { color:#747c8b; }
+.tunnel-actions { display:flex; gap:7px; margin-top:15px; }
+.tunnel-error,.tunnel-form-error { padding:9px 11px; border:1px solid #71333a; border-radius:7px; background:#2a171b; color:#ff9ca3; font-size:10px; line-height:1.4; }
+.tunnel-modal { width:min(680px,92vw); max-height:88vh; overflow:auto; }
+.tunnel-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.tunnel-help { margin:12px 0; padding:11px 12px; border:1px solid #29303b; border-radius:7px; background:#0e1117; color:#818999; font-size:11px; line-height:1.55; }
+.tunnel-help strong { color:#b9c1ce; font:10px monospace; }
+@media(max-width:1050px){.tunnel-grid{grid-template-columns:1fr}.tunnel-hero{align-items:flex-start;flex-direction:column}.tunnel-form-grid{grid-template-columns:1fr}}

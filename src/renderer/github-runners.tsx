@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowClockwise,
   CheckCircle,
-  Copy,
   FileCode,
   FolderOpen,
   GithubLogo,
@@ -146,6 +145,7 @@ function InstallRunnerModal({
       </div>
       <label>Labels adicionais
         <input placeholder="deploy,windows,producao" value={labels} disabled={installing} onChange={(event) => setLabels(event.target.value)}/>
+        <small className="field-help">O Controle Run acrescenta automaticamente uma label exclusiva para direcionar o workflow somente a este runner.</small>
       </label>
 
       <label>Conta do serviço do Windows
@@ -285,7 +285,6 @@ export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GitHubRunnerProgress | null>(null)
   const [prepared, setPrepared] = useState<GitHubRunnerPrepareDeploymentResult | null>(null)
-  const [copied, setCopied] = useState(false)
 
   const groupNames = useMemo(() => new Map(projectGroups.map((group) => [group.id, group.name])), [projectGroups])
   async function refresh() {
@@ -342,21 +341,12 @@ export function GitHubRunnersPage({ projectGroups, onError }: RunnerPageProps) {
       onError(message)
     } finally { setBusyId(null) }
   }
-  async function copyWorkflow() {
-    try {
-      await window.controleRun.copyGitHubRunnerWorkflow()
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
-      onError(null)
-    } catch (error) { onError(messageOf(error)) }
-  }
-
   return <>
     <section className="runner-hero">
       <div><p className="eyebrow">INFRAESTRUTURA</p><h2>GitHub Actions Runners</h2><p>Instale e mantenha agentes de automação como serviços independentes do Windows.</p></div>
-      <div className="hero-actions"><button className="button secondary" onClick={copyWorkflow}><Copy/>{copied ? 'Workflow copiado' : 'Copiar workflow padrão'}</button><button className="button primary" onClick={openInstall}><Plus/>Novo runner</button><button className="button secondary" onClick={refresh}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div>
+      <div className="hero-actions"><button className="button primary" onClick={openInstall}><Plus/>Novo runner</button><button className="button secondary" onClick={refresh}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div>
     </section>
-    <div className="runner-notice"><ShieldCheck/><div><strong>Credenciais temporárias e instalação verificada</strong><span>Tokens e senhas não são persistidos. O pacote oficial é validado por SHA-256 antes da configuração.</span></div></div>
+    <div className="runner-notice"><ShieldCheck/><div><strong>Credenciais temporárias, Action fixa e runner direcionado</strong><span>Tokens e senhas não são persistidos. O pacote é validado e cada novo runner recebe uma label exclusiva para deploy.</span></div></div>
     {!state.runners.length
       ? <section className="empty runner-empty"><div className="empty-icon"><GithubLogo/></div><h3>Nenhum runner cadastrado</h3><p>Adicione um runner de organização para atender vários repositórios ou use um runner isolado por repositório.</p><button className="button primary" onClick={openInstall}><Plus/>Instalar primeiro runner</button></section>
       : <section className="runner-grid">{state.runners.map((runner) => <RunnerCard

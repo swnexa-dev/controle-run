@@ -7,7 +7,7 @@ import {
   BACKGROUND_RECOVERY_ARGUMENT,
   isBackgroundRecovery,
   recoveryLoginItem,
-  startupRecoveryIsEnabled
+  startupRecoveryRegistration
 } from './startup-recovery'
 
 const directories: string[] = []
@@ -41,27 +41,41 @@ describe('recuperação no logon do Windows', () => {
 
   it('aceita a confirmação exata do Electron mesmo quando o indicador genérico do executável diverge', () => {
     const expected = recoveryLoginItem('C:\\Program Files\\Controle Run\\Controle Run.exe')
-    expect(startupRecoveryIsEnabled({ openAtLogin: true }, expected)).toBe(true)
+    expect(startupRecoveryRegistration({ openAtLogin: true }, expected)).toBe('enabled')
   })
 
   it('reconhece a entrada habilitada na lista do Windows como alternativa', () => {
     const expected = recoveryLoginItem('C:\\Program Files\\Controle Run\\Controle Run.exe')
-    expect(startupRecoveryIsEnabled({
+    expect(startupRecoveryRegistration({
       openAtLogin: false,
       launchItems: [{
+        name: 'Controle Run Recovery',
         path: 'c:\\program files\\controle run\\Controle Run.exe',
         args: [BACKGROUND_RECOVERY_ARGUMENT],
         enabled: true
       }]
-    }, expected)).toBe(true)
+    }, expected)).toBe('enabled')
   })
 
-  it('rejeita uma entrada ausente ou desabilitada', () => {
+  it('diferencia uma entrada ausente de uma desabilitada pelo usuário', () => {
     const expected = recoveryLoginItem('C:\\Program Files\\Controle Run\\Controle Run.exe')
-    expect(startupRecoveryIsEnabled({ openAtLogin: false }, expected)).toBe(false)
-    expect(startupRecoveryIsEnabled({
+    expect(startupRecoveryRegistration({ openAtLogin: false }, expected)).toBe('missing')
+    expect(startupRecoveryRegistration({
       openAtLogin: false,
-      launchItems: [{ path: expected.path, args: expected.args, enabled: false }]
-    }, expected)).toBe(false)
+      launchItems: [{ name: expected.name, path: expected.path, args: expected.args, enabled: false }]
+    }, expected)).toBe('disabled')
+  })
+
+  it('não confunde uma entrada antiga em outro caminho com a instalação atual', () => {
+    const expected = recoveryLoginItem('C:\\Program Files\\Controle Run\\Controle Run.exe')
+    expect(startupRecoveryRegistration({
+      openAtLogin: false,
+      launchItems: [{
+        name: expected.name,
+        path: 'C:\\Users\\INFO\\Desktop\\Controle Run.exe',
+        args: expected.args,
+        enabled: true
+      }]
+    }, expected)).toBe('missing')
   })
 })

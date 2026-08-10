@@ -20,6 +20,7 @@ export function recoveryLoginItem(executablePath: string) {
 interface WindowsLoginItemState {
   openAtLogin: boolean
   launchItems?: Array<{
+    name?: string
     path: string
     args: string[]
     enabled: boolean
@@ -27,6 +28,7 @@ interface WindowsLoginItemState {
 }
 
 interface ExpectedLoginItem {
+  name: string
   path: string
   args: string[]
 }
@@ -35,17 +37,18 @@ function sameWindowsPath(first: string, second: string) {
   return path.win32.resolve(first).toLowerCase() === path.win32.resolve(second).toLowerCase()
 }
 
-export function startupRecoveryIsEnabled(actual: WindowsLoginItemState, expected: ExpectedLoginItem) {
-  // openAtLogin já considera o mesmo path e os mesmos argumentos informados
-  // ao getLoginItemSettings. launchItems funciona como alternativa em versões
-  // do Windows nas quais esse indicador demora a refletir a entrada recém-criada.
-  if (actual.openAtLogin) return true
-  return Boolean(actual.launchItems?.some((item) =>
-    item.enabled &&
-    sameWindowsPath(item.path, expected.path) &&
-    item.args.length === expected.args.length &&
-    item.args.every((argument, index) => argument === expected.args[index])
-  ))
+export type StartupRecoveryRegistration = 'enabled' | 'disabled' | 'missing'
+
+export function startupRecoveryRegistration(actual: WindowsLoginItemState, expected: ExpectedLoginItem): StartupRecoveryRegistration {
+  const matchingItems = actual.launchItems?.filter((item) =>
+    item.name?.toLowerCase() === expected.name.toLowerCase() &&
+    sameWindowsPath(item.path, expected.path)
+  ) || []
+  if (matchingItems.some((item) => item.enabled)) return 'enabled'
+  if (matchingItems.length) return 'disabled'
+  // openAtLogin considera o path e os argumentos usados na consulta.
+  if (actual.openAtLogin) return 'enabled'
+  return 'missing'
 }
 
 export async function appendRecoveryLog(userDataPath: string, status: 'success' | 'failed', message: string) {

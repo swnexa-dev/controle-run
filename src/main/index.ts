@@ -48,7 +48,8 @@ import {
   appendRecoveryLog,
   isBackgroundRecovery,
   recoveryLoginItem,
-  startupRecoveryIsEnabled
+  startupRecoveryRegistration,
+  type StartupRecoveryRegistration
 } from './startup-recovery'
 
 async function migrateLegacyFolder(settings: Awaited<ReturnType<typeof loadSettings>>) {
@@ -433,17 +434,18 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock()
 if (!hasSingleInstanceLock) app.quit()
 const backgroundRecovery = isBackgroundRecovery(process.argv)
 
-function configureStartupRecovery() {
-  if (process.platform !== 'win32' || !app.isPackaged) return
+function configureStartupRecovery(): StartupRecoveryRegistration | 'not-applicable' {
+  if (process.platform !== 'win32' || !app.isPackaged) return 'not-applicable'
   const loginItem = recoveryLoginItem(process.execPath)
-  app.setLoginItemSettings(loginItem)
-  const actual = app.getLoginItemSettings({ path: loginItem.path, args: [...loginItem.args] })
-  if (!startupRecoveryIsEnabled(actual, loginItem)) {
-    throw new Error('O Windows não confirmou a entrada de recuperação automática do Controle Run.')
+  const readRegistration = () => app.getLoginItemSettings({ path: loginItem.path, args: [...loginItem.args] })
+  let actual = readRegistration()
+  let registration = startupRecoveryRegistration(actual, loginItem)
+  if (registration === 'missing') {
+    app.setLoginItemSettings(loginItem)
+    actual = readRegistration()
+    registration = startupRecoveryRegistration(actual, loginItem)
   }
-  if (!actual.executableWillLaunchAtLogin) {
-    console.warn('O Windows confirmou a entrada de recuperação, mas o indicador genérico do executável ainda não foi atualizado.')
-  }
+  return registration
 }
 
 async function runBackgroundRecovery() {
@@ -476,12 +478,18 @@ app.on('second-instance', () => {
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return
   try {
-    configureStartupRecovery()
+    const registration = configureStartupRecovery()
+    if (registration === 'disabled') {
+      console.info('A recuperação automática do Controle Run foi desabilitada pelo usuário no Windows.')
+    } else if (registration === 'missing') {
+      const message = 'O Windows ainda não confirmou a entrada de recuperação automática do Controle Run.'
+      await appendRecoveryLog(app.getPath('userData'), 'failed', `Registro de inicialização: ${message}`).catch(() => undefined)
+      console.warn(message)
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     await appendRecoveryLog(app.getPath('userData'), 'failed', `Registro de inicialização: ${message}`).catch(() => undefined)
     console.error('Falha ao registrar a recuperação automática:', error)
-    if (!backgroundRecovery) dialog.showErrorBox('Recuperação automática não configurada', message)
   }
   if (backgroundRecovery) {
     await runBackgroundRecovery()

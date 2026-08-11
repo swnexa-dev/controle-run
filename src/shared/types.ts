@@ -192,7 +192,7 @@ export interface EnvVarDraft {
   value: string
 }
 
-export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart' | 'permanent-stop'
+export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart' | 'permanent-stop' | 'reset-restarts'
 
 export interface ControleRunApi {
   clearAllData(confirmation: string): Promise<AppState>
@@ -207,6 +207,7 @@ export interface ControleRunApi {
   openUrl(id: string): Promise<void>
   readEnv(id: string): Promise<EnvVarDraft[]>
   saveEnv(id: string, variables: EnvVarDraft[]): Promise<void>
+  getProjectLogs(id: string): Promise<string>
   getGitHubRunners(): Promise<GitHubRunnerState>
   getGitHubRunnerDefaults(): Promise<GitHubRunnerInstallDefaults>
   suggestGitHubRunnerPath(name: string): Promise<string>

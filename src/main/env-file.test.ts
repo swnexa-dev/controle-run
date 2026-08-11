@@ -38,4 +38,5 @@ describe('env file editor', () => {
     await expect(fs.readFile(path.join(folder, '.env'), 'utf8')).resolves.toBe('# comentario\nAPI_URL=http://localhost:4102\nFEATURE_FLAG=true\n')
     await expect(fs.access(path.join(folder, '.env.backup'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
 })

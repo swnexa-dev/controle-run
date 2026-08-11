@@ -63,7 +63,8 @@ export async function saveEnvFile(projectPath: string, variables: EnvVarDraft[])
     throw error
   })
 
-  const lines = parseEnv(existing.replace(/\r?\n$/, ''))
+  const existingWithoutTrailingNewline = existing.replace(/\r?\n$/, '')
+  const lines = (existingWithoutTrailingNewline ? parseEnv(existingWithoutTrailingNewline) : [])
     .map((line) => {
       if (line.type === 'raw') return line.text
       const next = nextByKey.get(line.key)

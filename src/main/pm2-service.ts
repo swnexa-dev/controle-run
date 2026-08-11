@@ -7,7 +7,13 @@ import type { ProjectAction, ProjectConfig } from '../shared/types'
 const connect = () => new Promise<void>((resolve, reject) => pm2.connect((error) => error ? reject(error) : resolve()))
 const list = () => new Promise<pm2.ProcessDescription[]>((resolve, reject) => pm2.list((error, value) => error ? reject(error) : resolve(value)))
 const remove = (name: string) => new Promise<void>((resolve, reject) => pm2.delete(name, (error) => error ? reject(error) : resolve()))
-const runAction = (name: string, action: Exclude<ProjectAction, 'build-restart'>) => new Promise<void>((resolve, reject) => {
+const reset = (name: string) => new Promise<void>((resolve, reject) => {
+  // A API do PM2 expõe reset, embora a definição TypeScript do pacote ainda
+  // não a declare.
+  const api = pm2 as unknown as { reset(target: string, callback: (error?: Error | null) => void): void }
+  api.reset(name, (error) => error ? reject(error) : resolve())
+})
+const runAction = (name: string, action: Exclude<ProjectAction, 'build-restart' | 'permanent-stop' | 'reset-restarts'>) => new Promise<void>((resolve, reject) => {
   const callback = (error?: Error | null) => error ? reject(error) : resolve()
   if (action === 'start') pm2.restart(name, callback)
   else if (action === 'restart') pm2.restart(name, callback)
@@ -136,7 +142,7 @@ export async function startProject(project: ProjectConfig) {
 }
 
 export async function controlProject(project: ProjectConfig, action: ProjectAction) {
-  if (action === 'build-restart' || action === 'permanent-stop') throw new Error('Ação de projeto deve ser executada pelo serviço principal.')
+  if (action === 'build-restart' || action === 'permanent-stop' || action === 'reset-restarts') throw new Error('Ação de projeto deve ser executada pelo serviço principal.')
   await ensureConnection()
   const processes = await list()
   const current = processes.find((process) => process.name === project.pm2Name)
@@ -150,6 +156,13 @@ export async function controlProject(project: ProjectConfig, action: ProjectActi
   if (action === 'start' && !current) return startProject(project)
   if (!current) throw new Error('O projeto ainda não foi iniciado pelo Controle Run.')
   return runAction(project.pm2Name, action)
+}
+
+export async function resetProjectRestarts(project: ProjectConfig) {
+  await ensureConnection()
+  const processes = await list()
+  if (!processes.some((process) => process.name === project.pm2Name)) return
+  await reset(project.pm2Name)
 }
 
 export async function controlManagedProcess(name: string, options: pm2.StartOptions, action: 'start' | 'stop' | 'restart') {

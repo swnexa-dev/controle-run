@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { IpcMainInvokeEvent } from 'electron'
 import { discoverProjectFolder, discoverProjects, mergeProjectConfig, projectId } from './discovery'
 import { readEnvFile, saveEnvFile } from './env-file'
-import { controlProject, disconnectPm2, getProcesses, removeProjectProcess, startProject } from './pm2-service'
+import { controlProject, disconnectPm2, getProcesses, removeProjectProcess, resetProjectRestarts, startProject } from './pm2-service'
 import { clearSettings, loadSettings, saveSettings } from './store'
 import { detectLocalUrl } from './urls'
 import {
@@ -112,6 +112,26 @@ async function latestProcessError(processInfo: Awaited<ReturnType<typeof getProc
   } catch {
     return env.status === 'errored' ? 'O processo encerrou; o log de erro do PM2 não está disponível.' : undefined
   }
+}
+
+async function lastLogLines(file: string | undefined, count = 100) {
+  if (!file) return ''
+  try {
+    const content = await fs.readFile(file, 'utf8')
+    return content.split(/\r?\n/).filter(Boolean).slice(-count).join('\n')
+  } catch {
+    return ''
+  }
+}
+
+async function projectLogs(project: { pm2Name: string }) {
+  const processes = await getProcesses()
+  const processInfo = processes.find((process) => process.name === project.pm2Name)
+  if (!processInfo) return 'Ainda não há logs: este serviço não foi iniciado pelo Controle Run.'
+  const env = processInfo.pm2_env as { pm_out_log_path?: string; pm_err_log_path?: string } | undefined
+  const [output, errors] = await Promise.all([lastLogLines(env?.pm_out_log_path), lastLogLines(env?.pm_err_log_path)])
+  if (!output && !errors) return 'Nenhuma linha de log foi registrada ainda.'
+  return [output && `SAÍDA (últimas 100 linhas)\n${output}`, errors && `ERROS (últimas 100 linhas)\n${errors}`].filter(Boolean).join('\n\n')
 }
 
 async function autoStart(state: AppState) {
@@ -316,11 +336,13 @@ function registerIpc() {
   })
   secureHandle('project:action', async (_event, inputId: unknown, inputAction: unknown) => {
     const id = idOf(inputId, 'Projeto')
-    const action = enumOf<ProjectAction>(inputAction, 'Ação do projeto', ['start', 'stop', 'restart', 'build-restart', 'permanent-stop'])
+    const action = enumOf<ProjectAction>(inputAction, 'Ação do projeto', ['start', 'stop', 'restart', 'build-restart', 'permanent-stop', 'reset-restarts'])
     const settings = await loadSettings()
     const project = settings.projects[id]
     if (!project) throw new Error('Projeto não encontrado.')
-    if (action === 'permanent-stop') {
+    if (action === 'reset-restarts') {
+      await resetProjectRestarts(project)
+    } else if (action === 'permanent-stop') {
       // O stop cancela o reinício do PM2 e mantém o log disponível para
       // diagnóstico; autoStart evita a recuperação automática no próximo uso.
       await controlProject(project, 'stop').catch((error: unknown) => {
@@ -354,6 +376,13 @@ function registerIpc() {
     const processInfo = project ? processes.find((process) => process.name === project.pm2Name) : undefined
     const url = project ? await detectLocalUrl(project, processInfo?.pid) : null
     if (url) await shell.openExternal(url)
+  })
+  secureHandle('project:logs', async (_event, inputId: unknown) => {
+    const id = idOf(inputId, 'Projeto')
+    const settings = await loadSettings()
+    const project = settings.projects[id]
+    if (!project) throw new Error('Projeto não encontrado.')
+    return projectLogs(project)
   })
   secureHandle('project:env-read', async (_event, inputId: unknown) => {
     const id = idOf(inputId, 'Projeto')

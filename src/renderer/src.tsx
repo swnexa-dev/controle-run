@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ArrowClockwise, ArrowLeft, ArrowSquareOut, Broom, CaretRight, FolderOpen, GearSix, Hammer, Pause, Play, Plus, Pulse, SignOut, Trash, X } from '@phosphor-icons/react'
+import { ArrowClockwise, ArrowLeft, ArrowSquareOut, Broom, CaretRight, FileText, FolderOpen, GearSix, Hammer, Pause, Play, Plus, Pulse, SignOut, Trash, X } from '@phosphor-icons/react'
 import type { AppState, EnvVarDraft, ProjectAction, ProjectDraft, ProjectView } from '../shared/types'
 import './style.css'
 import './groups.css'
@@ -18,6 +18,13 @@ function formatUptime(ms: number) {
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes % 60}min` : `${minutes}min`
 }
 
+function variablesFromPaste(content: string): EnvVarDraft[] {
+  return content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:|\t)\s*(.*)$/)
+    return match ? { key: match[1], value: match[2].replace(/^['"]|['"]$/g, '') } : null
+  }).filter((item): item is EnvVarDraft => Boolean(item))
+}
+
 function ConfigModal({ project, onClose, onSave }: { project: ProjectView; onClose(): void; onSave(draft: ProjectDraft, variables: EnvVarDraft[]): void }) {
   const [draft, setDraft] = useState<ProjectDraft>({
     id: project.id,
@@ -32,10 +39,12 @@ function ConfigModal({ project, onClose, onSave }: { project: ProjectView; onClo
     autoStart: project.autoStart
   })
   const [variables, setVariables] = useState<EnvVarDraft[]>([])
+  const [pasteContent, setPasteContent] = useState('')
   const [envLoading, setEnvLoading] = useState(true)
   const [envError, setEnvError] = useState<string | null>(null)
   useEffect(() => {
     let active = true
+    setEnvLoading(true)
     window.controleRun.readEnv(project.id)
       .then((items) => { if (active) setVariables(items.length ? items : [{ key: '', value: '' }]) })
       .catch((error) => { if (active) setEnvError(error instanceof Error ? error.message : String(error)) })
@@ -64,8 +73,9 @@ function ConfigModal({ project, onClose, onSave }: { project: ProjectView; onClo
         <label className="toggle"><input type="checkbox" disabled={!draft.buildScript || !draft.buildOnDeploy} checked={draft.installDependenciesOnDeploy} onChange={(e) => setDraft({ ...draft, installDependenciesOnDeploy: e.target.checked })}/> Instalar dependências quando o lockfile mudar</label>
       </section>
       <section className="env-editor">
-        <div className="env-editor-head"><div><span>VARIÁVEIS .ENV</span><p>{project.path}\.env</p></div><button type="button" className="action-button" onClick={() => setVariables([...variables, { key: '', value: '' }])}><Plus/>Adicionar</button></div>
+        <div className="env-editor-head"><div><span>VARIÁVEIS DE AMBIENTE</span><p>{project.path}\.env</p></div><button type="button" className="action-button" onClick={() => setVariables([...variables, { key: '', value: '' }])}><Plus/>Adicionar</button></div>
         {envError && <p className="env-message">{envError}</p>}
+        <div className="special-paste"><textarea value={pasteContent} placeholder={'Colagem especial: COLE_CHAVE=valor, COLE_CHAVE: valor ou colunas chave + valor'} onChange={(e) => setPasteContent(e.target.value)}/><button type="button" className="action-button" disabled={!pasteContent.trim()} onClick={() => { const imported = variablesFromPaste(pasteContent); const next = new Map(variables.filter((item) => item.key).map((item) => [item.key, item])); imported.forEach((item) => next.set(item.key, item)); setVariables([...next.values()]); setPasteContent('') }}>Importar colagem</button></div>
         {envLoading ? <p className="env-message">Carregando .env...</p> : <div className="env-rows">
           {variables.map((item, index) => <div className="env-row" key={index}>
             <input placeholder="CHAVE" value={item.key} onChange={(e) => updateVariable(index, { key: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '') })}/>
@@ -79,16 +89,19 @@ function ConfigModal({ project, onClose, onSave }: { project: ProjectView; onClo
   </div>
 }
 
-function ProjectCard({ project, busy, onAction, onConfigure, onOpen, onOpenUrl }: { project: ProjectView; busy: boolean; onAction(action: ProjectAction): void; onConfigure(): void; onOpen(): void; onOpenUrl(): void }) {
+function LogsModal({ project, logs, onClose }: { project: ProjectView; logs: string; onClose(): void }) {
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal logs-modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-title"><div><span>LOGS · ÚLTIMAS 100 LINHAS</span><h2>{project.name}</h2></div><button className="icon-button" onClick={onClose}><X size={20}/></button></div><pre>{logs}</pre></section></div>
+}
+
+function ProjectCard({ project, busy, onAction, onConfigure, onOpen, onOpenUrl, onLogs }: { project: ProjectView; busy: boolean; onAction(action: ProjectAction): void; onConfigure(): void; onOpen(): void; onOpenUrl(): void; onLogs(): void }) {
   const online = project.status === 'online', configured = Boolean(project.npmScript || project.entry)
   const stoppedPermanently = !project.autoStart && !online
   return <article className={`project-card ${online ? 'active' : ''}`}>
     <div className="card-head"><div className={`status-dot ${project.status}`}/><div className="project-identity"><h3>{project.name}</h3>{project.packageName && project.packageName.toLowerCase() !== project.name.toLowerCase() && <small>{project.packageName}</small>}<button onClick={onOpen} title={project.path}>{project.path}</button></div><span className={`status-pill ${project.status}`}>{online ? 'ONLINE' : stoppedPermanently ? 'DESATIVADO' : project.status === 'errored' ? 'ERRO' : 'PAUSADO'}</span></div>
-    <div className="metrics"><div><small>CPU</small><strong>{project.cpu.toFixed(1)}%</strong></div><div><small>MEMÓRIA</small><strong>{formatBytes(project.memory)}</strong></div><div><small>TEMPO ONLINE</small><strong>{formatUptime(project.uptime)}</strong></div><div><small>REINÍCIOS</small><strong>{project.restarts}</strong></div></div>
+    <div className="metrics"><div><small>CPU</small><strong>{project.cpu.toFixed(1)}%</strong></div><div><small>MEMÓRIA</small><strong>{formatBytes(project.memory)}</strong></div><div><small>TEMPO ONLINE</small><strong>{formatUptime(project.uptime)}</strong></div><div><small>REINÍCIOS</small><strong>{project.restarts}</strong><button className="restart-reset" disabled={busy || !project.restarts} onClick={() => onAction('reset-restarts')}>Zerar</button></div></div>
     <div className="process-meta"><span>PID {project.pid || '—'}</span><span>Node {project.nodeVersion || '—'}</span><span>{project.mode === 'npm' ? `npm run ${project.npmScript || '—'}` : project.entry || 'Não configurado'}</span></div>
     <div className={`service-link ${project.localUrl ? '' : 'muted'}`}><div><small>ACESSO LOCAL</small><strong>{project.localUrl || 'Link não detectado'}</strong></div><button className="icon-button" title="Abrir no navegador" disabled={!project.localUrl} onClick={onOpenUrl}><ArrowSquareOut/></button></div>
-    {project.error && <pre className="process-error" title="Últimas linhas do log de erro do PM2">{project.error}</pre>}
-    <div className="card-actions"><button className="action-button" disabled={busy || !configured} onClick={() => onAction(online ? 'stop' : 'start')}>{online ? <Pause weight="fill"/> : <Play weight="fill"/>}{online ? 'Pausar' : 'Iniciar'}</button><button className="action-button" disabled={busy || !online} onClick={() => onAction('restart')}><ArrowClockwise/>Reiniciar</button>{project.buildScript && <button className="action-button" disabled={busy} title={`npm run ${project.buildScript}`} onClick={() => onAction('build-restart')}><Hammer/>Build + reiniciar</button>}<button className="action-button" disabled={busy || stoppedPermanently} title="Para o processo, cancela reinícios pendentes e impede a inicialização automática" onClick={() => onAction('permanent-stop')}><Pause weight="fill"/>Desativar</button><button className="action-button push-right" onClick={onConfigure}><GearSix/>Configurar</button></div>
+    <div className="card-actions"><button className="action-button" disabled={busy || !configured} onClick={() => onAction(online ? 'stop' : 'start')}>{online ? <Pause weight="fill"/> : <Play weight="fill"/>}{online ? 'Pausar' : 'Iniciar'}</button><button className="action-button" disabled={busy || !online} onClick={() => onAction('restart')}><ArrowClockwise/>Reiniciar</button>{project.buildScript && <button className="action-button" disabled={busy} title={`npm run ${project.buildScript}`} onClick={() => onAction('build-restart')}><Hammer/>Build + reiniciar</button>}<button className="action-button" disabled={busy || stoppedPermanently} title="Para o processo, cancela reinícios pendentes e impede a inicialização automática" onClick={() => onAction('permanent-stop')}><Pause weight="fill"/>Desativar</button><button className="action-button" disabled={busy} onClick={onLogs}><FileText/>Logs</button><button className="action-button push-right" onClick={onConfigure}><GearSix/>Configurar</button></div>
   </article>
 }
 
@@ -116,7 +129,7 @@ function ProjectFolderCard({ group, onOpen, onRemove }: { group: { id: string; n
 }
 
 function App() {
-  const [state, setState] = useState(EMPTY), [loading, setLoading] = useState(true), [busyId, setBusyId] = useState<string | null>(null), [editing, setEditing] = useState<ProjectView | null>(null), [selectedGroupId, setSelectedGroupId] = useState<string | null>(null), [error, setError] = useState<string | null>(null)
+  const [state, setState] = useState(EMPTY), [loading, setLoading] = useState(true), [busyId, setBusyId] = useState<string | null>(null), [editing, setEditing] = useState<ProjectView | null>(null), [logsProject, setLogsProject] = useState<ProjectView | null>(null), [logs, setLogs] = useState(''), [selectedGroupId, setSelectedGroupId] = useState<string | null>(null), [error, setError] = useState<string | null>(null)
   const [activePage, setActivePage] = useState<'projects' | 'runners' | 'tunnels'>('projects')
   const refresh = useCallback(async () => { try { setState(await window.controleRun.refresh()); setError(null) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } }, [])
   useEffect(() => { window.controleRun.getState().then(setState).catch((e) => setError(String(e))).finally(() => setLoading(false)) }, [])
@@ -137,6 +150,7 @@ function App() {
   async function removeProject(groupId: string, name: string) { if (!window.confirm(`Remover ${name} do Controle Run? Os arquivos da pasta não serão apagados.`)) return; setLoading(true); try { setState(await window.controleRun.removeProject(groupId)); setError(null) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setLoading(false) } }
   async function action(project: ProjectView, command: ProjectAction) { setBusyId(project.id); try { setState(await window.controleRun.action(project.id, command)); setError(null) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusyId(null) } }
   async function save(draft: ProjectDraft, variables: EnvVarDraft[]) { setBusyId(draft.id); try { await window.controleRun.saveEnv(draft.id, variables); setState(await window.controleRun.configure(draft)); setEditing(null); setError(null) } catch (e) { setError(String(e)) } finally { setBusyId(null) } }
+  async function openLogs(project: ProjectView) { setBusyId(project.id); try { setLogs(await window.controleRun.getProjectLogs(project.id)); setLogsProject(project) } catch (e) { setError(e instanceof Error ? e.message : String(e)) } finally { setBusyId(null) } }
   async function clearAllData() {
     const warning = 'Isso apagará todos os cadastros e preferências do Controle Run. Pastas dos projetos, processos PM2, runners instalados e túneis existentes não serão removidos e poderão continuar em execução.\n\nDigite LIMPAR para confirmar:'
     const confirmation = window.prompt(warning)
@@ -167,10 +181,11 @@ function App() {
     {activePage === 'projects' ? <>
       {selectedGroup ? <section className="detail-hero"><button className="back-button" onClick={() => setSelectedGroupId(null)}><ArrowLeft/>Voltar</button><div><p className="eyebrow">DETALHES DO PROJETO</p><h2>{selectedGroup.name}</h2><p>{selectedGroup.services[0]?.groupPath}</p></div><div className="hero-actions"><button className="button secondary" onClick={() => window.controleRun.openFolder(selectedGroup.services[0].id)}><FolderOpen/>Abrir pasta</button><button className="button secondary" onClick={refresh} disabled={!state.projectPaths.length}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div></section> : <section className="hero"><div><p className="eyebrow">VISÃO GERAL</p><h2>Seus projetos, sob controle.</h2><p>Adicione pastas de projetos e abra uma pasta para ver frontend e backend separadamente.</p></div><div className="hero-actions"><button className="button primary" onClick={addProject}><Plus/>Adicionar projeto</button><button className="button secondary" onClick={refresh} disabled={!state.projectPaths.length}><ArrowClockwise className={loading ? 'spin' : ''}/>Atualizar</button></div></section>}
       {state.projectPaths.length > 0 && !selectedGroup && <section className="summary"><div><small>PROJETOS</small><strong>{groups.length}</strong></div><div><small>SERVIÇOS ONLINE</small><strong className="green">{totals.online}/{state.projects.length}</strong></div><div><small>CPU TOTAL</small><strong>{totals.cpu.toFixed(1)}%</strong></div><div><small>MEMÓRIA TOTAL</small><strong>{formatBytes(totals.memory)}</strong></div></section>}
-      {!state.projectPaths.length ? <section className="empty"><div className="empty-icon"><FolderOpen/></div><h3>Adicione seu primeiro projeto</h3><p>Escolha a pasta do projeto. Dentro dela, o Controle Run encontrará frontend e backend e administrará os dois serviços separadamente.</p><button className="button primary" onClick={addProject}><Plus/>Adicionar projeto</button></section> : state.projects.length === 0 ? <section className="empty"><h3>Nenhum serviço encontrado</h3><p>As pastas adicionadas não estão mais disponíveis. Verifique os caminhos dos projetos.</p></section> : selectedGroup ? <section className="project-group detail-panel"><div className="group-heading"><div><span>SERVIÇOS</span><h3>Backend e frontend</h3><p className="group-path">Gerencie cada parte do projeto separadamente.</p></div><div className="group-controls"><small>{selectedGroup.services.filter((service) => service.status === 'online').length}/{selectedGroup.services.length} online</small><button className="icon-button danger" title="Remover projeto" onClick={() => removeProject(selectedGroup.id, selectedGroup.name)}><Trash/></button></div></div><div className="project-grid">{selectedGroup.services.map((project) => <ProjectCard key={project.id} project={project} busy={busyId === project.id} onAction={(command) => action(project, command)} onConfigure={() => setEditing(project)} onOpen={() => window.controleRun.openFolder(project.id)} onOpenUrl={() => window.controleRun.openUrl(project.id)}/>)}</div></section> : <section className="folder-grid">{groups.map((group) => <ProjectFolderCard key={group.id} group={group} onOpen={() => setSelectedGroupId(group.id)} onRemove={() => removeProject(group.id, group.name)}/>)}</section>}
+      {!state.projectPaths.length ? <section className="empty"><div className="empty-icon"><FolderOpen/></div><h3>Adicione seu primeiro projeto</h3><p>Escolha a pasta do projeto. Dentro dela, o Controle Run encontrará frontend e backend e administrará os dois serviços separadamente.</p><button className="button primary" onClick={addProject}><Plus/>Adicionar projeto</button></section> : state.projects.length === 0 ? <section className="empty"><h3>Nenhum serviço encontrado</h3><p>As pastas adicionadas não estão mais disponíveis. Verifique os caminhos dos projetos.</p></section> : selectedGroup ? <section className="project-group detail-panel"><div className="group-heading"><div><span>SERVIÇOS</span><h3>Backend e frontend</h3><p className="group-path">Gerencie cada parte do projeto separadamente.</p></div><div className="group-controls"><small>{selectedGroup.services.filter((service) => service.status === 'online').length}/{selectedGroup.services.length} online</small><button className="icon-button danger" title="Remover projeto" onClick={() => removeProject(selectedGroup.id, selectedGroup.name)}><Trash/></button></div></div><div className="project-grid">{selectedGroup.services.map((project) => <ProjectCard key={project.id} project={project} busy={busyId === project.id} onAction={(command) => action(project, command)} onConfigure={() => setEditing(project)} onOpen={() => window.controleRun.openFolder(project.id)} onOpenUrl={() => window.controleRun.openUrl(project.id)} onLogs={() => openLogs(project)}/>)}</div></section> : <section className="folder-grid">{groups.map((group) => <ProjectFolderCard key={group.id} group={group} onOpen={() => setSelectedGroupId(group.id)} onRemove={() => removeProject(group.id, group.name)}/>)}</section>}
     </> : activePage === 'runners' ? <GitHubRunnersPage projectGroups={groups.map((group) => ({ id: group.id, name: group.name }))} onError={setError}/> : <CloudflareTunnelsPage projects={state.projects} onError={setError}/>}
     <footer><span><i/> PM2 LOCAL</span><span>ORQUESTRAÇÃO LOCAL-FIRST</span></footer>
     {editing && <ConfigModal project={editing} onClose={() => setEditing(null)} onSave={save}/>} 
+    {logsProject && <LogsModal project={logsProject} logs={logs} onClose={() => setLogsProject(null)}/>}
   </main>
 }
 

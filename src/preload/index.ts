@@ -22,6 +22,7 @@ const api: ControleRunApi = {
   action: (id: string, action: ProjectAction) => ipcRenderer.invoke('project:action', id, action),
   openFolder: (id: string) => ipcRenderer.invoke('project:open-folder', id),
   openUrl: (id: string) => ipcRenderer.invoke('project:open-url', id),
+  getProjectLogs: (id: string) => ipcRenderer.invoke('project:logs', id),
   readEnv: (id: string) => ipcRenderer.invoke('project:env-read', id),
   saveEnv: (id: string, variables: EnvVarDraft[]) => ipcRenderer.invoke('project:env-save', id, variables),
   getGitHubRunners: () => ipcRenderer.invoke('runner:state'),

@@ -4,18 +4,12 @@
   gap: 28px;
 }
 
-.process-error {
-  max-height: 104px;
-  overflow: auto;
-  margin: 12px 0 0;
-  padding: 10px 12px;
-  white-space: pre-wrap;
-  border: 1px solid #71333a;
-  border-radius: 7px;
-  background: #25161a;
-  color: #ffabb1;
-  font: 500 10px/1.45 monospace;
-}
+.restart-reset { margin: 5px 0 0; padding: 0; border: 0; background: transparent; color: var(--green); font: 600 9px monospace; cursor: pointer; }
+.restart-reset:disabled { opacity: .35; cursor: not-allowed; }
+.logs-modal { width: min(900px, 90vw); }
+.logs-modal pre { max-height: min(65vh, 680px); margin: 0; padding: 14px; overflow: auto; border: 1px solid #2b303c; border-radius: 8px; background: #090b10; color: #d9dde7; white-space: pre-wrap; font: 500 11px/1.5 monospace; }
+.special-paste { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 12px 0; }
+.special-paste textarea { min-height: 64px; resize: vertical; padding: 9px; border: 1px solid #2b303d; border-radius: 7px; background: #0d0f14; color: #e8eaf0; font: 11px monospace; }
 
 .folder-grid {
   display: grid;

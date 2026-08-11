@@ -100,7 +100,10 @@ export function buildStartOptions(project: ProjectConfig, hiddenRunnerPath = run
   if (project.mode === 'npm') {
     if (process.platform === 'win32') {
       if (!hiddenRunnerPath) throw new Error('Executor em segundo plano ainda nao foi preparado.')
-      const command = [project.npmCommand || `npm run ${project.npmScript || 'start'}`, project.args || ''].filter(Boolean).join(' ')
+      // O NPM inclui node_modules/.bin no PATH do script. Executar o valor
+      // bruto (por exemplo, "vite preview") pula essa etapa e falha no
+      // Windows mesmo quando `npm run preview` funciona no terminal.
+      const command = [`npm run ${project.npmScript || 'start'}`, project.args ? `-- ${project.args}` : ''].filter(Boolean).join(' ')
       options.script = hiddenRunnerPath
       options.args = [command]
       options.interpreter = process.execPath

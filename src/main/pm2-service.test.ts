@@ -27,7 +27,7 @@ describe('PM2 start options', () => {
     const options = buildStartOptions(project, 'C:\\Users\\teste\\AppData\\Roaming\\controle-run\\pm2-hidden-runner.cjs')
     if (process.platform === 'win32') {
       expect(String(options.script).toLowerCase()).toMatch(/pm2-hidden-runner\.cjs$/)
-      expect(options.args).toEqual(['node server.js --port 4100'])
+      expect(options.args).toEqual(['npm run start -- --port 4100'])
       expect(options.interpreter).toBe(process.execPath)
     } else {
       expect(options.script).toBe('npm')

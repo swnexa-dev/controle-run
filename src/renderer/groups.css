@@ -4,8 +4,13 @@
   gap: 28px;
 }
 
-.restart-reset { margin: 5px 0 0; padding: 0; border: 0; background: transparent; color: var(--green); font: 600 9px monospace; cursor: pointer; }
+.restart-count { display: flex; align-items: center; gap: 5px; }
+.restart-reset { width: 18px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--green); cursor: pointer; }
+.restart-reset svg { width: 14px; height: 14px; }
 .restart-reset:disabled { opacity: .35; cursor: not-allowed; }
+.project-card .card-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.project-card .card-actions .action-button { justify-content: center; min-width: 0; }
+.project-card .card-actions .push-right { margin-left: 0; }
 .logs-modal { width: min(900px, 90vw); }
 .logs-modal pre { max-height: min(65vh, 680px); margin: 0; padding: 14px; overflow: auto; border: 1px solid #2b303c; border-radius: 8px; background: #090b10; color: #d9dde7; white-space: pre-wrap; font: 500 11px/1.5 monospace; }
 .special-paste { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 12px 0; }

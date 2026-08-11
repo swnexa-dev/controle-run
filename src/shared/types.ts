@@ -192,7 +192,7 @@ export interface EnvVarDraft {
   value: string
 }
 
-export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart'
+export type ProjectAction = 'start' | 'stop' | 'restart' | 'build-restart' | 'permanent-stop'
 
 export interface ControleRunApi {
   clearAllData(confirmation: string): Promise<AppState>

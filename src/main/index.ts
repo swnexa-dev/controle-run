@@ -94,10 +94,24 @@ async function buildState(): Promise<AppState> {
       restarts: env?.restart_time || 0,
       pid: processInfo?.pid,
       nodeVersion: runtime?.node_version,
-      version: runtime?.version
+      version: runtime?.version,
+      error: await latestProcessError(processInfo)
     }
   }))
   return { projectPaths: settings.projectPaths, projects }
+}
+
+async function latestProcessError(processInfo: Awaited<ReturnType<typeof getProcesses>>[number] | undefined) {
+  const env = processInfo?.pm2_env as { status?: string; pm_err_log_path?: string; restart_time?: number } | undefined
+  if (!env || (env.status !== 'errored' && !env.restart_time)) return undefined
+  if (!env.pm_err_log_path) return env.status === 'errored' ? 'O processo encerrou sem fornecer detalhes ao PM2.' : undefined
+  try {
+    const content = await fs.readFile(env.pm_err_log_path, 'utf8')
+    const lines = content.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+    return lines.slice(-6).join('\n') || (env.status === 'errored' ? 'O processo encerrou sem registrar um erro.' : undefined)
+  } catch {
+    return env.status === 'errored' ? 'O processo encerrou; o log de erro do PM2 não está disponível.' : undefined
+  }
 }
 
 async function autoStart(state: AppState) {
@@ -302,15 +316,27 @@ function registerIpc() {
   })
   secureHandle('project:action', async (_event, inputId: unknown, inputAction: unknown) => {
     const id = idOf(inputId, 'Projeto')
-    const action = enumOf<ProjectAction>(inputAction, 'Ação do projeto', ['start', 'stop', 'restart', 'build-restart'])
+    const action = enumOf<ProjectAction>(inputAction, 'Ação do projeto', ['start', 'stop', 'restart', 'build-restart', 'permanent-stop'])
     const settings = await loadSettings()
     const project = settings.projects[id]
     if (!project) throw new Error('Projeto não encontrado.')
-    if (action === 'build-restart') {
+    if (action === 'permanent-stop') {
+      // O stop cancela o reinício do PM2 e mantém o log disponível para
+      // diagnóstico; autoStart evita a recuperação automática no próximo uso.
+      await controlProject(project, 'stop').catch((error: unknown) => {
+        if (!(error instanceof Error) || error.message !== 'O projeto ainda não foi iniciado pelo Controle Run.') throw error
+      })
+      settings.projects[id] = { ...project, autoStart: false }
+      await saveSettings(settings)
+    } else if (action === 'build-restart') {
       await buildProject(project)
       await controlProject(project, 'start')
     } else {
       await controlProject(project, action)
+      if ((action === 'start' || action === 'restart') && !project.autoStart) {
+        settings.projects[id] = { ...project, autoStart: true }
+        await saveSettings(settings)
+      }
     }
     return buildState()
   })

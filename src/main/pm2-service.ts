@@ -75,12 +75,18 @@ function customArgs(value?: string) {
   return value?.trim() ? value.trim().split(/\s+/) : []
 }
 
+export const MAX_START_ATTEMPTS = 10
+
 export function buildStartOptions(project: ProjectConfig, hiddenRunnerPath = runnerPath): pm2.StartOptions {
   const options: pm2.StartOptions & { windowsHide?: boolean } = {
     name: project.pm2Name,
     cwd: project.path,
     autorestart: true,
-    max_restarts: 10,
+    // O padrão de 1s do PM2 considera processos que duram pouco como estáveis,
+    // o que pode resultar em centenas de reinícios.
+    min_uptime: 10_000,
+    restart_delay: 1_000,
+    max_restarts: MAX_START_ATTEMPTS,
     time: true,
     windowsHide: true
   }
@@ -130,7 +136,7 @@ export async function startProject(project: ProjectConfig) {
 }
 
 export async function controlProject(project: ProjectConfig, action: ProjectAction) {
-  if (action === 'build-restart') throw new Error('A ação de build deve ser executada pelo serviço de build.')
+  if (action === 'build-restart' || action === 'permanent-stop') throw new Error('Ação de projeto deve ser executada pelo serviço principal.')
   await ensureConnection()
   const processes = await list()
   const current = processes.find((process) => process.name === project.pm2Name)

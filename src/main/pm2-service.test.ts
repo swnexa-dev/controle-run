@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectConfig } from '../shared/types'
-import { buildStartOptions, launchMatches, waitForManagedProcessRemoval } from './pm2-service'
+import { buildStartOptions, launchMatches, MAX_START_ATTEMPTS, waitForManagedProcessRemoval } from './pm2-service'
 
 const project: ProjectConfig = {
   id: 'service-id',
@@ -32,6 +32,9 @@ describe('PM2 start options', () => {
     } else {
       expect(options.script).toBe('npm')
     }
+    expect(options.max_restarts).toBe(MAX_START_ATTEMPTS)
+    expect(options.min_uptime).toBe(10_000)
+    expect(options.restart_delay).toBe(1_000)
   })
 
   it('mantém o processo existente quando caminho, script e argumentos não mudaram', () => {

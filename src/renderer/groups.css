@@ -4,6 +4,19 @@
   gap: 28px;
 }
 
+.process-error {
+  max-height: 104px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  border: 1px solid #71333a;
+  border-radius: 7px;
+  background: #25161a;
+  color: #ffabb1;
+  font: 500 10px/1.45 monospace;
+}
+
 .folder-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
